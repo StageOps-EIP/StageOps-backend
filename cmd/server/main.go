@@ -7,6 +7,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
+	"github.com/stageops/backend/internal/audit"
 	"github.com/stageops/backend/internal/auth"
 )
 
@@ -17,15 +18,24 @@ func main() {
 
 	app.Use(securityHeaders())
 
-	repo := auth.NewCouchDBRepository(auth.CouchConfig{
+	couchCfg := auth.CouchConfig{
 		BaseURL:  mustEnv("COUCHDB_URL"),
 		DB:       mustEnv("COUCHDB_DB"),
 		Username: mustEnv("COUCHDB_USER"),
 		Password: mustEnv("COUCHDB_PASSWORD"),
+	}
+
+	repo := auth.NewCouchDBRepository(couchCfg)
+
+	auditRepo := audit.NewCouchDBRepository(audit.CouchConfig{
+		BaseURL:  couchCfg.BaseURL,
+		DB:       couchCfg.DB,
+		Username: couchCfg.Username,
+		Password: couchCfg.Password,
 	})
 
 	jwtSecret := mustEnv("JWT_SECRET")
-	service := auth.NewService(repo, jwtSecret)
+	service := auth.NewService(repo, auditRepo, jwtSecret)
 	handler := auth.NewHandler(service)
 
 	rateLimitResponse := func(c *fiber.Ctx) error {
@@ -53,10 +63,15 @@ func main() {
 	})
 
 	api := app.Group("/api")
+
 	authGroup := api.Group("/auth")
 	authGroup.Post("/register", registerLimiter, handler.Register)
 	authGroup.Post("/login", loginLimiter, handler.Login)
 	authGroup.Get("/me", auth.JWTMiddleware(jwtSecret), handler.Me)
+
+	// User management — RG only.
+	usersGroup := api.Group("/users", auth.JWTMiddleware(jwtSecret))
+	usersGroup.Patch("/:id/role", auth.RequireRole(auth.RoleRG), handler.UpdateUserRole)
 
 	port := envOr("APP_PORT", "3000")
 	tlsCert := os.Getenv("TLS_CERT")

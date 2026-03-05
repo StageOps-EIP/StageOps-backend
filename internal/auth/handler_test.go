@@ -38,6 +38,14 @@ func (m *mockAuthService) GetUser(ctx context.Context, id string) (*UserPublic, 
 	return args.Get(0).(*UserPublic), args.Error(1)
 }
 
+func (m *mockAuthService) UpdateUserRole(ctx context.Context, targetID, newRole, authorID, authorRole string) (*UserPublic, error) {
+	args := m.Called(ctx, targetID, newRole, authorID, authorRole)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*UserPublic), args.Error(1)
+}
+
 // --- Helpers ---
 
 func newTestApp(svc AuthService, jwtSecret string) *fiber.App {
@@ -52,6 +60,9 @@ func newTestApp(svc AuthService, jwtSecret string) *fiber.App {
 	authGroup.Post("/login", h.Login)
 	authGroup.Get("/me", JWTMiddleware(jwtSecret), h.Me)
 
+	usersGroup := api.Group("/users", JWTMiddleware(jwtSecret))
+	usersGroup.Patch("/:id/role", RequireRole(RoleRG), h.UpdateUserRole)
+
 	return app
 }
 
@@ -59,6 +70,15 @@ func postJSON(app *fiber.App, path string, body interface{}) *http.Response {
 	b, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
+	resp, _ := app.Test(req)
+	return resp
+}
+
+func patchJSON(app *fiber.App, path string, body interface{}, token string) *http.Response {
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPatch, path, bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, _ := app.Test(req)
 	return resp
 }
@@ -213,11 +233,12 @@ func TestMeHandler_Success(t *testing.T) {
 	user := &UserPublic{
 		ID:        "user::abc",
 		Email:     "user@example.com",
+		Role:      RolePlateau,
 		CreatedAt: time.Now().UTC().Truncate(time.Second),
 	}
 	svc.On("GetUser", mock.Anything, "user::abc").Return(user, nil)
 
-	token, _ := generateToken("user::abc", "user@example.com", jwtSecret)
+	token, _ := generateToken("user::abc", "user@example.com", RolePlateau, jwtSecret)
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 
@@ -228,5 +249,80 @@ func TestMeHandler_Success(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&result)
 	assert.Equal(t, "user::abc", result.ID)
 	assert.Equal(t, "user@example.com", result.Email)
+	svc.AssertExpectations(t)
+}
+
+// --- PATCH /api/users/:id/role ---
+
+func TestUpdateUserRoleHandler_Success(t *testing.T) {
+	svc := new(mockAuthService)
+	jwtSecret := "test-secret"
+	app := newTestApp(svc, jwtSecret)
+
+	updated := &UserPublic{
+		ID:        "user::target",
+		Email:     "target@example.com",
+		Role:      RoleSon,
+		CreatedAt: time.Now().UTC().Truncate(time.Second),
+	}
+	svc.On("UpdateUserRole", mock.Anything, "user::target", RoleSon, "user::rg", RoleRG).
+		Return(updated, nil)
+
+	token, _ := generateToken("user::rg", "rg@example.com", RoleRG, jwtSecret)
+	resp := patchJSON(app, "/api/users/user::target/role", map[string]string{"role": RoleSon}, token)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	var result UserPublic
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, RoleSon, result.Role)
+	svc.AssertExpectations(t)
+}
+
+func TestUpdateUserRoleHandler_Forbidden_Lumiere(t *testing.T) {
+	svc := new(mockAuthService)
+	jwtSecret := "test-secret"
+	app := newTestApp(svc, jwtSecret)
+
+	token, _ := generateToken("user::lumiere", "lumiere@example.com", RoleLumiere, jwtSecret)
+	resp := patchJSON(app, "/api/users/user::target/role", map[string]string{"role": RoleRG}, token)
+
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	errObj := decodeError(resp)
+	assert.Equal(t, "FORBIDDEN", errObj["code"])
+	// Service must not be called.
+	svc.AssertNotCalled(t, "UpdateUserRole")
+}
+
+func TestUpdateUserRoleHandler_InvalidRole(t *testing.T) {
+	svc := new(mockAuthService)
+	jwtSecret := "test-secret"
+	app := newTestApp(svc, jwtSecret)
+
+	svc.On("UpdateUserRole", mock.Anything, "user::target", "superadmin", "user::rg", RoleRG).
+		Return(nil, &ValidationError{Message: `Rôle invalide : "superadmin". Valeurs acceptées : rg, lumiere, son, plateau.`})
+
+	token, _ := generateToken("user::rg", "rg@example.com", RoleRG, jwtSecret)
+	resp := patchJSON(app, "/api/users/user::target/role", map[string]string{"role": "superadmin"}, token)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	errObj := decodeError(resp)
+	assert.Equal(t, "VALIDATION_ERROR", errObj["code"])
+	svc.AssertExpectations(t)
+}
+
+func TestUpdateUserRoleHandler_NotFound(t *testing.T) {
+	svc := new(mockAuthService)
+	jwtSecret := "test-secret"
+	app := newTestApp(svc, jwtSecret)
+
+	svc.On("UpdateUserRole", mock.Anything, "user::ghost", RoleSon, "user::rg", RoleRG).
+		Return(nil, ErrUserNotFound)
+
+	token, _ := generateToken("user::rg", "rg@example.com", RoleRG, jwtSecret)
+	resp := patchJSON(app, "/api/users/user::ghost/role", map[string]string{"role": RoleSon}, token)
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	errObj := decodeError(resp)
+	assert.Equal(t, "NOT_FOUND", errObj["code"])
 	svc.AssertExpectations(t)
 }

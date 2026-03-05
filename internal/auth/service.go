@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -10,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/stageops/backend/internal/audit"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -28,17 +30,19 @@ type AuthService interface {
 	Register(ctx context.Context, email, password string) (string, error)
 	Login(ctx context.Context, email, password string) (string, error)
 	GetUser(ctx context.Context, id string) (*UserPublic, error)
+	UpdateUserRole(ctx context.Context, targetID, newRole, authorID, authorRole string) (*UserPublic, error)
 }
 
 // Service implements AuthService with a UserRepository and a JWT secret.
 type Service struct {
 	repo      UserRepository
+	auditRepo audit.Repository
 	jwtSecret string
 }
 
-// NewService creates a new Service.
-func NewService(repo UserRepository, jwtSecret string) *Service {
-	return &Service{repo: repo, jwtSecret: jwtSecret}
+// NewService creates a new Service. auditRepo may be nil to disable audit logging.
+func NewService(repo UserRepository, auditRepo audit.Repository, jwtSecret string) *Service {
+	return &Service{repo: repo, auditRepo: auditRepo, jwtSecret: jwtSecret}
 }
 
 // validateEmail returns true when email matches a practical RFC 5322 subset.
@@ -112,6 +116,7 @@ func (s *Service) Register(ctx context.Context, email, password string) (string,
 		ID:           fmt.Sprintf("user::%s", uuid.New().String()),
 		Type:         "user",
 		Email:        email,
+		Role:         DefaultRole,
 		PasswordHash: hash,
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -124,7 +129,7 @@ func (s *Service) Register(ctx context.Context, email, password string) (string,
 		return "", fmt.Errorf("creating user: %w", err)
 	}
 
-	token, err := generateToken(user.ID, user.Email, s.jwtSecret)
+	token, err := generateToken(user.ID, user.Email, user.Role, s.jwtSecret)
 	if err != nil {
 		return "", fmt.Errorf("generating token: %w", err)
 	}
@@ -164,7 +169,7 @@ func (s *Service) Login(ctx context.Context, email, password string) (string, er
 		_ = s.repo.UpdateUser(ctx, user) // best-effort: don't block a successful login
 	}
 
-	token, err := generateToken(user.ID, user.Email, s.jwtSecret)
+	token, err := generateToken(user.ID, user.Email, user.Role, s.jwtSecret)
 	if err != nil {
 		return "", fmt.Errorf("generating token: %w", err)
 	}
@@ -199,6 +204,63 @@ func (s *Service) GetUser(ctx context.Context, id string) (*UserPublic, error) {
 	return &UserPublic{
 		ID:        user.ID,
 		Email:     user.Email,
+		Role:      user.Role,
 		CreatedAt: user.CreatedAt,
 	}, nil
+}
+
+// UpdateUserRole changes the role of the user identified by targetID.
+// Only valid roles are accepted. The change is recorded in the audit log.
+func (s *Service) UpdateUserRole(ctx context.Context, targetID, newRole, authorID, authorRole string) (*UserPublic, error) {
+	if !IsValidRole(newRole) {
+		return nil, &ValidationError{Message: fmt.Sprintf("Rôle invalide : %q. Valeurs acceptées : rg, lumiere, son, plateau.", newRole)}
+	}
+
+	user, err := s.repo.FindByID(ctx, targetID)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("finding user: %w", err)
+	}
+
+	oldRole := user.Role
+	user.Role = newRole
+	user.UpdatedAt = time.Now().UTC()
+
+	if err := s.repo.UpdateUser(ctx, user); err != nil {
+		return nil, fmt.Errorf("updating user role: %w", err)
+	}
+
+	s.logRoleChange(ctx, authorID, authorRole, targetID, oldRole, newRole)
+
+	return &UserPublic{
+		ID:        user.ID,
+		Email:     user.Email,
+		Role:      user.Role,
+		CreatedAt: user.CreatedAt,
+	}, nil
+}
+
+// logRoleChange writes a ROLE_CHANGED audit entry. Failures are swallowed
+// so that an audit log error never blocks a successful role update.
+func (s *Service) logRoleChange(ctx context.Context, authorID, authorRole, targetID, oldRole, newRole string) {
+	if s.auditRepo == nil {
+		return
+	}
+
+	payload, _ := json.Marshal(map[string]string{"before": oldRole, "after": newRole})
+
+	entry := audit.AuditEntry{
+		ID:         fmt.Sprintf("audit::%s", uuid.New().String()),
+		Type:       "audit",
+		Action:     audit.ActionRoleChanged,
+		AuthorID:   authorID,
+		AuthorRole: authorRole,
+		TargetID:   targetID,
+		Payload:    payload,
+		CreatedAt:  time.Now().UTC(),
+	}
+
+	_ = s.auditRepo.Log(ctx, entry)
 }
