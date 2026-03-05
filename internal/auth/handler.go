@@ -67,6 +67,32 @@ func (h *Handler) Me(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(user)
 }
 
+// UpdateUserRole handles PATCH /api/users/:id/role.
+// Protected by JWTMiddleware + RequireRole(RoleRG).
+func (h *Handler) UpdateUserRole(c *fiber.Ctx) error {
+	targetID := c.Params("id")
+	if targetID == "" {
+		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Identifiant utilisateur manquant.")
+	}
+
+	var body struct {
+		Role string `json:"role"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Corps de requête invalide.")
+	}
+
+	authorID, _ := c.Locals("user_id").(string)
+	authorRole, _ := c.Locals("role").(string)
+
+	updated, err := h.service.UpdateUserRole(c.Context(), targetID, body.Role, authorID, authorRole)
+	if err != nil {
+		return mapServiceError(c, err)
+	}
+
+	return c.Status(fiber.StatusOK).JSON(updated)
+}
+
 // respondError writes the standard error JSON envelope.
 func respondError(c *fiber.Ctx, status int, code, message string) error {
 	return c.Status(status).JSON(fiber.Map{
