@@ -10,6 +10,11 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/stageops/backend/internal/audit"
 	"github.com/stageops/backend/internal/auth"
+	"github.com/stageops/backend/internal/couch"
+	"github.com/stageops/backend/internal/equipment"
+	"github.com/stageops/backend/internal/events"
+	"github.com/stageops/backend/internal/incidents"
+	"github.com/stageops/backend/internal/team"
 )
 
 func main() {
@@ -31,6 +36,13 @@ func main() {
 		Password: mustEnv("COUCHDB_PASSWORD"),
 	}
 
+	sharedCouchCfg := couch.Config{
+		BaseURL:  couchCfg.BaseURL,
+		DB:       couchCfg.DB,
+		Username: couchCfg.Username,
+		Password: couchCfg.Password,
+	}
+
 	repo := auth.NewCouchDBRepository(couchCfg)
 
 	auditRepo := audit.NewCouchDBRepository(audit.CouchConfig{
@@ -43,6 +55,11 @@ func main() {
 	jwtSecret := mustEnv("JWT_SECRET")
 	service := auth.NewService(repo, auditRepo, jwtSecret)
 	handler := auth.NewHandler(service)
+
+	equipmentHandler := equipment.NewHandler(equipment.NewRepository(sharedCouchCfg))
+	eventsHandler := events.NewHandler(events.NewRepository(sharedCouchCfg))
+	incidentsHandler := incidents.NewHandler(incidents.NewRepository(sharedCouchCfg))
+	teamHandler := team.NewHandler(team.NewRepository(sharedCouchCfg))
 
 	rateLimitResponse := func(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
@@ -79,6 +96,34 @@ func main() {
 	usersGroup := api.Group("/users", auth.JWTMiddleware(jwtSecret))
 	usersGroup.Patch("/:id/role", auth.RequireRole(auth.RoleRG), handler.UpdateUserRole)
 
+	equip := api.Group("/equipment", auth.JWTMiddleware(jwtSecret))
+	equip.Get("/", equipmentHandler.List)
+	equip.Post("/", equipmentHandler.Create)
+	equip.Get("/:id", equipmentHandler.Get)
+	equip.Patch("/:id", equipmentHandler.Update)
+	equip.Delete("/:id", auth.RequireRole(auth.RoleRG), equipmentHandler.Delete)
+
+	evts := api.Group("/events", auth.JWTMiddleware(jwtSecret))
+	evts.Get("/", eventsHandler.List)
+	evts.Post("/", eventsHandler.Create)
+	evts.Get("/:id", eventsHandler.Get)
+	evts.Patch("/:id", eventsHandler.Update)
+	evts.Delete("/:id", auth.RequireRole(auth.RoleRG), eventsHandler.Delete)
+
+	inc := api.Group("/incidents", auth.JWTMiddleware(jwtSecret))
+	inc.Get("/", incidentsHandler.List)
+	inc.Post("/", incidentsHandler.Create)
+	inc.Get("/:id", incidentsHandler.Get)
+	inc.Patch("/:id", incidentsHandler.Update)
+	inc.Delete("/:id", auth.RequireRole(auth.RoleRG), incidentsHandler.Delete)
+
+	tm := api.Group("/team", auth.JWTMiddleware(jwtSecret))
+	tm.Get("/", teamHandler.List)
+	tm.Post("/", auth.RequireRole(auth.RoleRG), teamHandler.Create)
+	tm.Get("/:id", teamHandler.Get)
+	tm.Patch("/:id", auth.RequireRole(auth.RoleRG), teamHandler.Update)
+	tm.Delete("/:id", auth.RequireRole(auth.RoleRG), teamHandler.Delete)
+
 	port := envOr("APP_PORT", "3001")
 	tlsCert := os.Getenv("TLS_CERT")
 	tlsKey := os.Getenv("TLS_KEY")
@@ -92,7 +137,6 @@ func main() {
 	}
 }
 
-// securityHeaders sets mandatory security response headers on every request.
 func securityHeaders() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		c.Set("X-Content-Type-Options", "nosniff")
@@ -102,7 +146,6 @@ func securityHeaders() fiber.Handler {
 	}
 }
 
-// globalErrorHandler is the Fiber error handler of last resort.
 func globalErrorHandler(c *fiber.Ctx, _ error) error {
 	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 		"error": fiber.Map{
@@ -112,7 +155,6 @@ func globalErrorHandler(c *fiber.Ctx, _ error) error {
 	})
 }
 
-// mustEnv reads an environment variable or terminates the process.
 func mustEnv(key string) string {
 	v := os.Getenv(key)
 	if v == "" {
@@ -121,7 +163,6 @@ func mustEnv(key string) string {
 	return v
 }
 
-// envOr reads an environment variable with a fallback default.
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
