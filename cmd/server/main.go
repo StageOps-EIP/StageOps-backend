@@ -19,7 +19,7 @@ func main() {
 
 	app.Use(securityHeaders())
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: envOr("CORS_ORIGINS", "http://localhost:5173"),
+		AllowOrigins: envOr("CORS_ORIGINS", "http://localhost:8080"),
 		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
 		AllowMethods: "GET, POST, PATCH, DELETE, OPTIONS",
 	}))
