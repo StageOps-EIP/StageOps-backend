@@ -66,7 +66,7 @@ func main() {
 	projectService := projects.NewService(projects.NewCouchDBRepository(sharedCouchCfg), auditRepo)
 	projectHandler := projects.NewHandler(projectService)
 
-	equipmentHandler := equipment.NewHandler(equipment.NewRepository(sharedCouchCfg))
+	equipmentHandler := equipment.NewHandler(equipment.NewService(equipment.NewRepository(sharedCouchCfg), auditRepo))
 	eventsHandler := events.NewHandler(events.NewRepository(sharedCouchCfg))
 	incidentsHandler := incidents.NewHandler(incidents.NewRepository(sharedCouchCfg))
 	teamHandler := team.NewHandler(team.NewRepository(sharedCouchCfg))
@@ -113,12 +113,12 @@ func main() {
 	projectsGroup.Patch("/:id", auth.RequireRole(auth.RoleRG), projectHandler.Update)
 	projectsGroup.Delete("/:id", auth.RequireRole(auth.RoleRG), projectHandler.Delete)
 
-	equipmentGroup := api.Group("/equipment", auth.JWTMiddleware(jwtSecret))
+	equipmentGroup := api.Group("/projects/:projectId/equipment/:module", auth.JWTMiddleware(jwtSecret), auth.RequireProjectModule("", projectService))
 	equipmentGroup.Get("/", equipmentHandler.List)
 	equipmentGroup.Post("/", equipmentHandler.Create)
 	equipmentGroup.Get("/:id", equipmentHandler.Get)
 	equipmentGroup.Patch("/:id", equipmentHandler.Update)
-	equipmentGroup.Delete("/:id", auth.RequireRole(auth.RoleRG), equipmentHandler.Delete)
+	equipmentGroup.Delete("/:id", equipmentHandler.Delete)
 
 	eventsGroup := api.Group("/events", auth.JWTMiddleware(jwtSecret))
 	eventsGroup.Get("/", eventsHandler.List)

@@ -51,12 +51,16 @@ func JWTMiddleware(secret string) fiber.Handler {
 // their JWT. Mutation requests are rejected while the project module is off.
 func RequireProjectModule(moduleName string, checker ProjectModuleChecker) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		targetModule := moduleName
+		if targetModule == "" {
+			targetModule = c.Params("module")
+		}
 		role, ok := c.Locals("role").(string)
 		if !ok || role == "" {
 			return respondError(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Authentification requise.")
 		}
 
-		if role != RoleRG && !hasAssignedModule(c.Locals("assigned_modules"), moduleName) {
+		if role != RoleRG && !hasAssignedModule(c.Locals("assigned_modules"), targetModule) {
 			return respondError(c, fiber.StatusForbidden, "FORBIDDEN", "Accès refusé : module non attribué.")
 		}
 
@@ -68,7 +72,7 @@ func RequireProjectModule(moduleName string, checker ProjectModuleChecker) fiber
 		if projectID == "" {
 			return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Identifiant projet manquant.")
 		}
-		active, err := checker.IsModuleActive(c.Context(), projectID, moduleName)
+		active, err := checker.IsModuleActive(c.Context(), projectID, targetModule)
 		if err != nil {
 			return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Impossible de vérifier l'état du module du projet.")
 		}
