@@ -121,6 +121,9 @@ func (c *Client) DeleteDoc(ctx context.Context, id, rev string) error {
 	if resp.StatusCode == http.StatusNotFound {
 		return ErrNotFound
 	}
+	if resp.StatusCode == http.StatusConflict {
+		return ErrConflict
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		return fmt.Errorf("CouchDB returned status %d", resp.StatusCode)
 	}

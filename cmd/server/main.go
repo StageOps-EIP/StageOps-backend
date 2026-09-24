@@ -15,6 +15,7 @@ import (
 	"github.com/stageops/backend/internal/events"
 	"github.com/stageops/backend/internal/incidents"
 	"github.com/stageops/backend/internal/modules"
+	"github.com/stageops/backend/internal/projects"
 	"github.com/stageops/backend/internal/team"
 )
 
@@ -62,6 +63,8 @@ func main() {
 	})
 	moduleService := modules.NewService(moduleRepo, modules.NewCache(), auditRepo)
 	moduleHandler := modules.NewHandler(moduleService)
+	projectService := projects.NewService(projects.NewCouchDBRepository(sharedCouchCfg), auditRepo)
+	projectHandler := projects.NewHandler(projectService)
 
 	equipmentHandler := equipment.NewHandler(equipment.NewRepository(sharedCouchCfg))
 	eventsHandler := events.NewHandler(events.NewRepository(sharedCouchCfg))
@@ -101,6 +104,13 @@ func main() {
 	modulesGroup := api.Group("/modules", auth.JWTMiddleware(jwtSecret), auth.RequireRole(auth.RoleRG))
 	modulesGroup.Get("/", moduleHandler.GetAll)
 	modulesGroup.Patch("/:name/toggle", moduleHandler.Toggle)
+
+	projectsGroup := api.Group("/projects", auth.JWTMiddleware(jwtSecret))
+	projectsGroup.Get("/", projectHandler.List)
+	projectsGroup.Post("/", auth.RequireRole(auth.RoleRG), projectHandler.Create)
+	projectsGroup.Get("/:id", projectHandler.Get)
+	projectsGroup.Patch("/:id", auth.RequireRole(auth.RoleRG), projectHandler.Update)
+	projectsGroup.Delete("/:id", auth.RequireRole(auth.RoleRG), projectHandler.Delete)
 
 	equipmentGroup := api.Group("/equipment", auth.JWTMiddleware(jwtSecret))
 	equipmentGroup.Get("/", equipmentHandler.List)
