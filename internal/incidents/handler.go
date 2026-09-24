@@ -6,31 +6,24 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-type Handler struct {
-	repo *Repository
-}
+type Handler struct{ service IncidentService }
 
-func NewHandler(repo *Repository) *Handler {
-	return &Handler{repo: repo}
-}
+func NewHandler(service IncidentService) *Handler { return &Handler{service: service} }
 
 func (h *Handler) List(c *fiber.Ctx) error {
-	items, err := h.repo.List(c.Context())
+	incidents, err := h.service.List(c.Context(), c.Params("projectId"), c.Params("module"))
 	if err != nil {
-		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Erreur lors de la récupération des incidents.")
+		return mapError(c, err)
 	}
-	return c.Status(fiber.StatusOK).JSON(items)
+	return c.Status(fiber.StatusOK).JSON(incidents)
 }
 
 func (h *Handler) Get(c *fiber.Ctx) error {
-	item, err := h.repo.FindByID(c.Context(), c.Params("id"))
+	incident, err := h.service.Get(c.Context(), c.Params("projectId"), c.Params("module"), c.Params("id"))
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return respondError(c, fiber.StatusNotFound, "NOT_FOUND", "Incident introuvable.")
-		}
-		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Erreur lors de la récupération de l'incident.")
+		return mapError(c, err)
 	}
-	return c.Status(fiber.StatusOK).JSON(item)
+	return c.Status(fiber.StatusOK).JSON(incident)
 }
 
 func (h *Handler) Create(c *fiber.Ctx) error {
@@ -38,12 +31,11 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	if err := c.BodyParser(&input); err != nil {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Corps de requête invalide.")
 	}
-
-	item, err := h.repo.Create(c.Context(), &input)
+	incident, err := h.service.Create(c.Context(), c.Params("projectId"), c.Params("module"), input, local(c, "user_id"), local(c, "role"))
 	if err != nil {
 		return mapError(c, err)
 	}
-	return c.Status(fiber.StatusCreated).JSON(item)
+	return c.Status(fiber.StatusCreated).JSON(incident)
 }
 
 func (h *Handler) Update(c *fiber.Ctx) error {
@@ -51,40 +43,46 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 	if err := c.BodyParser(&input); err != nil {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Corps de requête invalide.")
 	}
-
-	item, err := h.repo.Update(c.Context(), c.Params("id"), &input)
+	incident, err := h.service.Update(c.Context(), c.Params("projectId"), c.Params("module"), c.Params("id"), input, local(c, "user_id"), local(c, "role"))
 	if err != nil {
 		return mapError(c, err)
 	}
-	return c.Status(fiber.StatusOK).JSON(item)
+	return c.Status(fiber.StatusOK).JSON(incident)
 }
 
 func (h *Handler) Delete(c *fiber.Ctx) error {
-	if err := h.repo.Delete(c.Context(), c.Params("id")); err != nil {
+	err := h.service.Delete(c.Context(), c.Params("projectId"), c.Params("module"), c.Params("id"), local(c, "user_id"), local(c, "role"))
+	if err != nil {
 		return mapError(c, err)
 	}
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
+func local(c *fiber.Ctx, key string) string {
+	value, _ := c.Locals(key).(string)
+	return value
+}
+
 func mapError(c *fiber.Ctx, err error) error {
-	if errors.Is(err, ErrNotFound) {
+	switch {
+	case errors.Is(err, ErrNotFound):
 		return respondError(c, fiber.StatusNotFound, "NOT_FOUND", "Incident introuvable.")
-	}
-	if errors.Is(err, ErrInvalidStatus) {
+	case errors.Is(err, ErrConflict):
+		return respondError(c, fiber.StatusConflict, "CONFLICT", "L'incident a été modifié par une autre requête.")
+	case errors.Is(err, ErrInvalidStatus):
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Statut invalide. Valeurs acceptées : open, in-progress, resolved, closed.")
-	}
-	if errors.Is(err, ErrInvalidSeverity) {
+	case errors.Is(err, ErrInvalidSeverity):
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Sévérité invalide. Valeurs acceptées : low, medium, high, critical.")
+	case errors.Is(err, ErrInvalidModule):
+		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Module invalide. Valeurs acceptées : lighting, audio.")
 	}
-	var valErr *ValidationError
-	if errors.As(err, &valErr) {
-		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", valErr.Message)
+	var validationError *ValidationError
+	if errors.As(err, &validationError) {
+		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", validationError.Message)
 	}
 	return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Une erreur interne est survenue.")
 }
 
 func respondError(c *fiber.Ctx, status int, code, message string) error {
-	return c.Status(status).JSON(fiber.Map{
-		"error": fiber.Map{"code": code, "message": message},
-	})
+	return c.Status(status).JSON(fiber.Map{"error": fiber.Map{"code": code, "message": message}})
 }
