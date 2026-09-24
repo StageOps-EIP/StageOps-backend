@@ -1,92 +1,121 @@
 # StageOps Backend
 
-API centrale de la plateforme StageOps.
+API REST de StageOps pour la gestion des projets scéniques, des équipes, du matériel et des incidents.
 
-Ce service constitue le cœur logique du système et gère l’ensemble des données, des règles métiers et des services d’intelligence technique.
+## Stack
 
-## Responsabilités
+- Go 1.21
+- Fiber v2
+- CouchDB via son API HTTP
+- JWT HS256 et bcrypt
+- Docker
 
-- Gestion des utilisateurs et rôles techniques
-- Gestion des projets scéniques
-- Inventaire matériel
-- Suivi d’état opérationnel
-- Gestion des incidents
-- Synchronisation multi-clients
-- Calcul de l’usure résiduelle des lampes (RUL)
+## Fonctionnalités disponibles
+
+- inscription, connexion, verrouillage après échecs répétés et endpoint utilisateur courant ;
+- rôles `rg`, `lumiere`, `son` et `plateau` ;
+- attribution de plusieurs modules à un utilisateur ;
+- projets avec modules `lighting`, `audio` et `stage` activables séparément ;
+- inventaire matériel par projet et module ;
+- positions 3D et adressage DMX avec détection de conflits ;
+- incidents lumière et son rattachés à un projet ;
+- journal d'audit des opérations sensibles.
 
 ## Architecture
 
-Architecture modulaire orientée domaine.
+```text
+cmd/server/             démarrage et câblage HTTP
+internal/auth/          authentification et autorisations
+internal/projects/      cycle de vie des projets
+internal/equipment/     matériel et patch DMX
+internal/incidents/     suivi des incidents
+internal/modules/       configuration globale historique
+internal/audit/         journal append-only
+internal/couch/         client HTTP CouchDB partagé
+```
 
-src/
-  modules/
-    auth/
-    users/
-    projects/
-    equipment/
-    lighting/
-    sound/
-    incidents/
-    rul-engine/
-  database/
-  middleware/
-  config/
+Chaque domaine sépare les handlers HTTP, les services métier et les repositories CouchDB.
 
-## Algorithme RUL (Remaining Useful Life)
+## Configuration
 
-Le module RUL estime la durée de vie restante des sources lumineuses en fonction de :
+Copier l'exemple puis remplacer les valeurs locales :
 
-- heures d’utilisation
-- cycles d’allumage
-- température de fonctionnement
-- historique de maintenance
+```bash
+cp .env.example .env
+```
 
-Objectif : maintenance prédictive du matériel scénique.
+Variables requises :
 
-## Stack technique
+| Variable | Description |
+|---|---|
+| `COUCHDB_URL` | URL de CouchDB, par exemple `http://localhost:5984` |
+| `COUCHDB_DB` | Nom de la base |
+| `COUCHDB_USER` | Utilisateur CouchDB |
+| `COUCHDB_PASSWORD` | Mot de passe CouchDB |
+| `JWT_SECRET` | Secret de signature JWT long et aléatoire |
+| `APP_PORT` | Port HTTP, `3000` par défaut |
+| `CORS_ORIGINS` | Origines autorisées, séparées par des virgules |
+| `TLS_CERT` | Chemin facultatif du certificat TLS |
+| `TLS_KEY` | Chemin facultatif de la clé TLS |
 
-- Node.js
-- API REST / GraphQL
-- PostgreSQL ou CouchDB
-- JWT Authentication
-- Validation middleware
+Ne jamais committer le fichier `.env` ni des certificats.
 
-## Installation
+## Démarrage
 
-### Prérequis
-Node.js >= 18  
-Base de données PostgreSQL ou CouchDB  
+Avec l'infrastructure Docker locale déjà configurée :
 
-### Setup
+```bash
+docker compose -f docker-compose.dev.yml up --build
+```
 
-git clone <repo>
-cd stageops-backend
-npm install
+Sans Docker :
 
-Créer `.env`
+```bash
+go mod download
+go run ./cmd/server
+```
 
-DATABASE_URL=
-JWT_SECRET=
-PORT=3000
+Le script `entrypoint.sh` attend CouchDB, crée la base et initialise les vues nécessaires avant de lancer le serveur.
 
-### Lancement
+## API principale
 
-npm run dev
+Toutes les routes protégées attendent `Authorization: Bearer <token>`.
 
-## Sécurité
+| Méthode | Route | Accès |
+|---|---|---|
+| `POST` | `/api/auth/register` | public |
+| `POST` | `/api/auth/login` | public |
+| `GET` | `/api/auth/me` | authentifié |
+| `PATCH` | `/api/users/:id/role` | RG |
+| `PATCH` | `/api/users/:id/modules` | RG |
+| `GET, POST` | `/api/projects/` | lecture authentifiée, création RG |
+| `GET, PATCH, DELETE` | `/api/projects/:id` | lecture authentifiée, mutation RG |
+| `GET, POST` | `/api/projects/:projectId/equipment/:module/` | module attribué |
+| `GET, PATCH, DELETE` | `/api/projects/:projectId/equipment/:module/:id` | module attribué |
+| `GET, POST` | `/api/projects/:projectId/incidents/:module/` | module attribué |
+| `GET, PATCH, DELETE` | `/api/projects/:projectId/incidents/:module/:id` | module attribué |
 
-- Authentification tokenisée
-- Permissions par rôle technique
-- Validation des entrées
+Les mutations de matériel et d'incidents sont bloquées quand le module correspondant est inactif dans le projet. Les erreurs suivent cette enveloppe :
 
-## Tests
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Description lisible de l'erreur."
+  }
+}
+```
 
-npm run test
+## Vérifications locales
 
-## Objectif MVP
+```bash
+gofmt -w .
+go test ./...
+go vet ./...
+```
 
-Fournir une API stable pour la gestion des opérations techniques scéniques.
+La CI exécute automatiquement le contrôle du formatage, les tests avec le détecteur de courses et `go vet` sur les branches et pull requests.
 
 ## Licence
 
-Projet académique.
+Projet académique EIP.
