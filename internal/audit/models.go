@@ -7,9 +7,10 @@ import (
 
 // Action constants for audit log entries.
 const (
-	ActionRoleChanged      = "ROLE_CHANGED"
-	ActionMaterialUpdated  = "MATERIAL_UPDATED"
-	ActionIncidentReported = "INCIDENT_REPORTED"
+	ActionRoleChanged        = "ROLE_CHANGED"
+	ActionMaterialUpdated    = "MATERIAL_UPDATED"
+	ActionIncidentReported   = "INCIDENT_REPORTED"
+	ActionUserModulesUpdated = "USER_MODULES_UPDATED"
 )
 
 // AuditEntry is a CouchDB document stored under id "audit::<uuid>".

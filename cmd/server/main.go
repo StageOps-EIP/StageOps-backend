@@ -100,6 +100,7 @@ func main() {
 
 	usersGroup := api.Group("/users", auth.JWTMiddleware(jwtSecret))
 	usersGroup.Patch("/:id/role", auth.RequireRole(auth.RoleRG), authHandler.UpdateUserRole)
+	usersGroup.Patch("/:id/modules", auth.RequireRole(auth.RoleRG), authHandler.UpdateUserModules)
 
 	modulesGroup := api.Group("/modules", auth.JWTMiddleware(jwtSecret), auth.RequireRole(auth.RoleRG))
 	modulesGroup.Get("/", moduleHandler.GetAll)

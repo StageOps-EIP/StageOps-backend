@@ -93,6 +93,36 @@ func (h *Handler) UpdateUserRole(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(updated)
 }
 
+// UpdateUserModules handles PATCH /api/users/:id/modules.
+func (h *Handler) UpdateUserModules(c *fiber.Ctx) error {
+	targetID := c.Params("id")
+	if targetID == "" {
+		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Identifiant utilisateur manquant.")
+	}
+	var body struct {
+		AssignedModules *[]string `json:"assigned_modules"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Corps de requête invalide.")
+	}
+	if body.AssignedModules == nil {
+		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Le champ 'assigned_modules' est requis.")
+	}
+	updated, err := h.service.UpdateUserModules(
+		c.Context(), targetID, *body.AssignedModules,
+		localValue(c, "user_id"), localValue(c, "role"),
+	)
+	if err != nil {
+		return mapServiceError(c, err)
+	}
+	return c.Status(fiber.StatusOK).JSON(updated)
+}
+
+func localValue(c *fiber.Ctx, key string) string {
+	value, _ := c.Locals(key).(string)
+	return value
+}
+
 // respondError writes the standard error JSON envelope.
 func respondError(c *fiber.Ctx, status int, code, message string) error {
 	return c.Status(status).JSON(fiber.Map{

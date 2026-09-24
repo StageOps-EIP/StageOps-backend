@@ -13,6 +13,59 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+type projectModuleCheckerMock struct {
+	active bool
+	err    error
+}
+
+func (m projectModuleCheckerMock) IsModuleActive(context.Context, string, string) (bool, error) {
+	return m.active, m.err
+}
+
+func newProjectModuleApp(role string, assigned []string, active bool) *fiber.App {
+	app := fiber.New()
+	app.All("/projects/:projectId/lighting", func(c *fiber.Ctx) error {
+		c.Locals("role", role)
+		c.Locals("assigned_modules", assigned)
+		return c.Next()
+	}, RequireProjectModule("lighting", projectModuleCheckerMock{active: active}), func(c *fiber.Ctx) error {
+		return c.SendStatus(http.StatusOK)
+	})
+	return app
+}
+
+func TestRequireProjectModuleAllowsAssignedRead(t *testing.T) {
+	app := newProjectModuleApp(RoleSon, []string{RoleLumiere}, false)
+
+	response, _ := app.Test(httptest.NewRequest(http.MethodGet, "/projects/project::1/lighting", nil))
+
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+}
+
+func TestRequireProjectModuleRejectsUnassignedUser(t *testing.T) {
+	app := newProjectModuleApp(RoleSon, []string{RoleSon}, true)
+
+	response, _ := app.Test(httptest.NewRequest(http.MethodGet, "/projects/project::1/lighting", nil))
+
+	assert.Equal(t, http.StatusForbidden, response.StatusCode)
+}
+
+func TestRequireProjectModuleRejectsInactiveMutation(t *testing.T) {
+	app := newProjectModuleApp(RoleLumiere, []string{RoleLumiere}, false)
+
+	response, _ := app.Test(httptest.NewRequest(http.MethodPost, "/projects/project::1/lighting", nil))
+
+	assert.Equal(t, http.StatusForbidden, response.StatusCode)
+}
+
+func TestRequireProjectModuleLetsRGReadAnyModule(t *testing.T) {
+	app := newProjectModuleApp(RoleRG, nil, false)
+
+	response, _ := app.Test(httptest.NewRequest(http.MethodGet, "/projects/project::1/lighting", nil))
+
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+}
+
 func newMiddlewareTestApp(secret string) *fiber.App {
 	app := fiber.New()
 	app.Get("/protected", JWTMiddleware(secret), func(c *fiber.Ctx) error {
