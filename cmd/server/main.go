@@ -93,6 +93,9 @@ func main() {
 	})
 
 	api := app.Group("/api")
+	api.Get("/health", func(c *fiber.Ctx) error {
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
+	})
 	authGroup := api.Group("/auth")
 	authGroup.Post("/register", registerLimiter, authHandler.Register)
 	authGroup.Post("/login", loginLimiter, authHandler.Login)
