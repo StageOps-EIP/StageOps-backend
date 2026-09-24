@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -213,4 +215,88 @@ func TestRequireDepartment_NoRole_Unauthorized(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/dept/son", nil)
 	resp, _ := app.Test(req)
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+// --- RequireModuleActive ---
+
+// mockModuleChecker implements ModuleChecker for testing.
+type mockModuleChecker struct {
+	active bool
+	err    error
+}
+
+func (m *mockModuleChecker) IsActive(_ context.Context, _ string) (bool, error) {
+	return m.active, m.err
+}
+
+func newModuleActiveTestApp(role, moduleName string, checker ModuleChecker) *fiber.App {
+	app := fiber.New()
+	app.Add("PATCH", "/resource",
+		func(c *fiber.Ctx) error {
+			c.Locals("role", role)
+			return c.Next()
+		},
+		RequireModuleActive(moduleName, checker),
+		func(c *fiber.Ctx) error {
+			return c.SendStatus(http.StatusOK)
+		},
+	)
+	// Also register GET for read-through tests.
+	app.Get("/resource",
+		func(c *fiber.Ctx) error {
+			c.Locals("role", role)
+			return c.Next()
+		},
+		RequireModuleActive(moduleName, checker),
+		func(c *fiber.Ctx) error {
+			return c.SendStatus(http.StatusOK)
+		},
+	)
+	return app
+}
+
+func TestRequireModuleActive_RG_ModuleActive_Pass(t *testing.T) {
+	checker := &mockModuleChecker{active: true}
+	app := newModuleActiveTestApp(RoleRG, "lumiere", checker)
+
+	req := httptest.NewRequest(http.MethodPatch, "/resource", nil)
+	resp, _ := app.Test(req)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestRequireModuleActive_RG_ModuleInactive_Forbidden(t *testing.T) {
+	checker := &mockModuleChecker{active: false}
+	app := newModuleActiveTestApp(RoleRG, "lumiere", checker)
+
+	req := httptest.NewRequest(http.MethodPatch, "/resource", nil)
+	resp, _ := app.Test(req)
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+}
+
+func TestRequireModuleActive_TechnicienLumiere_SkipCheck(t *testing.T) {
+	// Checker returns inactive, but technicien should skip this check.
+	checker := &mockModuleChecker{active: false}
+	app := newModuleActiveTestApp(RoleLumiere, "lumiere", checker)
+
+	req := httptest.NewRequest(http.MethodPatch, "/resource", nil)
+	resp, _ := app.Test(req)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestRequireModuleActive_RG_GET_AlwaysAllowed(t *testing.T) {
+	checker := &mockModuleChecker{active: false}
+	app := newModuleActiveTestApp(RoleRG, "lumiere", checker)
+
+	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	resp, _ := app.Test(req)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestRequireModuleActive_CheckerError_InternalError(t *testing.T) {
+	checker := &mockModuleChecker{err: errors.New("db down")}
+	app := newModuleActiveTestApp(RoleRG, "lumiere", checker)
+
+	req := httptest.NewRequest(http.MethodPatch, "/resource", nil)
+	resp, _ := app.Test(req)
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 }
