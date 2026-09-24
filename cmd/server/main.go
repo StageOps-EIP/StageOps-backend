@@ -14,6 +14,7 @@ import (
 	"github.com/stageops/backend/internal/equipment"
 	"github.com/stageops/backend/internal/events"
 	"github.com/stageops/backend/internal/incidents"
+	"github.com/stageops/backend/internal/modules"
 	"github.com/stageops/backend/internal/team"
 )
 
@@ -35,7 +36,6 @@ func main() {
 		Username: mustEnv("COUCHDB_USER"),
 		Password: mustEnv("COUCHDB_PASSWORD"),
 	}
-
 	sharedCouchCfg := couch.Config{
 		BaseURL:  couchCfg.BaseURL,
 		DB:       couchCfg.DB,
@@ -43,18 +43,25 @@ func main() {
 		Password: couchCfg.Password,
 	}
 
-	repo := auth.NewCouchDBRepository(couchCfg)
-
+	authRepo := auth.NewCouchDBRepository(couchCfg)
 	auditRepo := audit.NewCouchDBRepository(audit.CouchConfig{
 		BaseURL:  couchCfg.BaseURL,
 		DB:       couchCfg.DB,
 		Username: couchCfg.Username,
 		Password: couchCfg.Password,
 	})
-
 	jwtSecret := mustEnv("JWT_SECRET")
-	service := auth.NewService(repo, auditRepo, jwtSecret)
-	handler := auth.NewHandler(service)
+	authService := auth.NewService(authRepo, auditRepo, jwtSecret)
+	authHandler := auth.NewHandler(authService)
+
+	moduleRepo := modules.NewCouchDBRepository(modules.CouchConfig{
+		BaseURL:  couchCfg.BaseURL,
+		DB:       couchCfg.DB,
+		Username: couchCfg.Username,
+		Password: couchCfg.Password,
+	})
+	moduleService := modules.NewService(moduleRepo, modules.NewCache(), auditRepo)
+	moduleHandler := modules.NewHandler(moduleService)
 
 	equipmentHandler := equipment.NewHandler(equipment.NewRepository(sharedCouchCfg))
 	eventsHandler := events.NewHandler(events.NewRepository(sharedCouchCfg))
@@ -69,15 +76,12 @@ func main() {
 			},
 		})
 	}
-
-	// Login is capped at 5 req/min per IP to slow down brute-force attempts.
 	loginLimiter := limiter.New(limiter.Config{
 		Max:          5,
 		Expiration:   time.Minute,
 		KeyGenerator: func(c *fiber.Ctx) string { return c.IP() },
 		LimitReached: rateLimitResponse,
 	})
-
 	registerLimiter := limiter.New(limiter.Config{
 		Max:          10,
 		Expiration:   time.Minute,
@@ -86,55 +90,56 @@ func main() {
 	})
 
 	api := app.Group("/api")
-
 	authGroup := api.Group("/auth")
-	authGroup.Post("/register", registerLimiter, handler.Register)
-	authGroup.Post("/login", loginLimiter, handler.Login)
-	authGroup.Get("/me", auth.JWTMiddleware(jwtSecret), handler.Me)
+	authGroup.Post("/register", registerLimiter, authHandler.Register)
+	authGroup.Post("/login", loginLimiter, authHandler.Login)
+	authGroup.Get("/me", auth.JWTMiddleware(jwtSecret), authHandler.Me)
 
-	// User management — RG only.
 	usersGroup := api.Group("/users", auth.JWTMiddleware(jwtSecret))
-	usersGroup.Patch("/:id/role", auth.RequireRole(auth.RoleRG), handler.UpdateUserRole)
+	usersGroup.Patch("/:id/role", auth.RequireRole(auth.RoleRG), authHandler.UpdateUserRole)
 
-	equip := api.Group("/equipment", auth.JWTMiddleware(jwtSecret))
-	equip.Get("/", equipmentHandler.List)
-	equip.Post("/", equipmentHandler.Create)
-	equip.Get("/:id", equipmentHandler.Get)
-	equip.Patch("/:id", equipmentHandler.Update)
-	equip.Delete("/:id", auth.RequireRole(auth.RoleRG), equipmentHandler.Delete)
+	modulesGroup := api.Group("/modules", auth.JWTMiddleware(jwtSecret), auth.RequireRole(auth.RoleRG))
+	modulesGroup.Get("/", moduleHandler.GetAll)
+	modulesGroup.Patch("/:name/toggle", moduleHandler.Toggle)
 
-	evts := api.Group("/events", auth.JWTMiddleware(jwtSecret))
-	evts.Get("/", eventsHandler.List)
-	evts.Post("/", eventsHandler.Create)
-	evts.Get("/:id", eventsHandler.Get)
-	evts.Patch("/:id", eventsHandler.Update)
-	evts.Delete("/:id", auth.RequireRole(auth.RoleRG), eventsHandler.Delete)
+	equipmentGroup := api.Group("/equipment", auth.JWTMiddleware(jwtSecret))
+	equipmentGroup.Get("/", equipmentHandler.List)
+	equipmentGroup.Post("/", equipmentHandler.Create)
+	equipmentGroup.Get("/:id", equipmentHandler.Get)
+	equipmentGroup.Patch("/:id", equipmentHandler.Update)
+	equipmentGroup.Delete("/:id", auth.RequireRole(auth.RoleRG), equipmentHandler.Delete)
 
-	inc := api.Group("/incidents", auth.JWTMiddleware(jwtSecret))
-	inc.Get("/", incidentsHandler.List)
-	inc.Post("/", incidentsHandler.Create)
-	inc.Get("/:id", incidentsHandler.Get)
-	inc.Patch("/:id", incidentsHandler.Update)
-	inc.Delete("/:id", auth.RequireRole(auth.RoleRG), incidentsHandler.Delete)
+	eventsGroup := api.Group("/events", auth.JWTMiddleware(jwtSecret))
+	eventsGroup.Get("/", eventsHandler.List)
+	eventsGroup.Post("/", eventsHandler.Create)
+	eventsGroup.Get("/:id", eventsHandler.Get)
+	eventsGroup.Patch("/:id", eventsHandler.Update)
+	eventsGroup.Delete("/:id", auth.RequireRole(auth.RoleRG), eventsHandler.Delete)
 
-	tm := api.Group("/team", auth.JWTMiddleware(jwtSecret))
-	tm.Get("/", teamHandler.List)
-	tm.Post("/", auth.RequireRole(auth.RoleRG), teamHandler.Create)
-	tm.Get("/:id", teamHandler.Get)
-	tm.Patch("/:id", auth.RequireRole(auth.RoleRG), teamHandler.Update)
-	tm.Delete("/:id", auth.RequireRole(auth.RoleRG), teamHandler.Delete)
+	incidentsGroup := api.Group("/incidents", auth.JWTMiddleware(jwtSecret))
+	incidentsGroup.Get("/", incidentsHandler.List)
+	incidentsGroup.Post("/", incidentsHandler.Create)
+	incidentsGroup.Get("/:id", incidentsHandler.Get)
+	incidentsGroup.Patch("/:id", incidentsHandler.Update)
+	incidentsGroup.Delete("/:id", auth.RequireRole(auth.RoleRG), incidentsHandler.Delete)
 
-	port := envOr("APP_PORT", "3001")
+	teamGroup := api.Group("/team", auth.JWTMiddleware(jwtSecret))
+	teamGroup.Get("/", teamHandler.List)
+	teamGroup.Post("/", auth.RequireRole(auth.RoleRG), teamHandler.Create)
+	teamGroup.Get("/:id", teamHandler.Get)
+	teamGroup.Patch("/:id", auth.RequireRole(auth.RoleRG), teamHandler.Update)
+	teamGroup.Delete("/:id", auth.RequireRole(auth.RoleRG), teamHandler.Delete)
+
+	port := envOr("APP_PORT", "3000")
 	tlsCert := os.Getenv("TLS_CERT")
 	tlsKey := os.Getenv("TLS_KEY")
-
 	if tlsCert != "" && tlsKey != "" {
 		log.Printf("TLS enabled — listening on :%s", port)
 		log.Fatal(app.ListenTLS(":"+port, tlsCert, tlsKey))
-	} else {
-		log.Printf("TLS not configured — listening on :%s (HTTP only)", port)
-		log.Fatal(app.Listen(":" + port))
 	}
+
+	log.Printf("TLS not configured — listening on :%s (HTTP only)", port)
+	log.Fatal(app.Listen(":" + port))
 }
 
 func securityHeaders() fiber.Handler {
@@ -156,16 +161,16 @@ func globalErrorHandler(c *fiber.Ctx, _ error) error {
 }
 
 func mustEnv(key string) string {
-	v := os.Getenv(key)
-	if v == "" {
+	value := os.Getenv(key)
+	if value == "" {
 		log.Fatalf("required environment variable not set: %s", key)
 	}
-	return v
+	return value
 }
 
 func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+	if value := os.Getenv(key); value != "" {
+		return value
 	}
 	return fallback
 }

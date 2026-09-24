@@ -1,10 +1,17 @@
 package auth
 
 import (
+	"context"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
 )
+
+// ModuleChecker abstracts module active-state queries for the middleware layer.
+// This avoids a direct dependency on the modules package.
+type ModuleChecker interface {
+	IsActive(ctx context.Context, name string) (bool, error)
+}
 
 // JWTMiddleware validates the Bearer token from the Authorization header.
 // On success it sets "user_id", "email", and "role" in fiber.Ctx locals.
@@ -57,11 +64,14 @@ func RequireRole(roles ...string) fiber.Handler {
 }
 
 // RequireDepartment returns a middleware that enforces department-scoped access
-// for material updates and incident reports.
+// for both read and write operations.
 //
 // The target department is read from the ":department" URL parameter.
-// RG passes unconditionally. Technicians are only allowed to act on the
-// department that matches their own role. Returns 403 otherwise.
+//   - RG: read access is always granted; write access is delegated to
+//     RequireModuleActive on the relevant routes.
+//   - Technicians (lumiere, son): read AND write access only on their own
+//     department. Cross-department access returns 403.
+//
 // Must run after JWTMiddleware.
 func RequireDepartment() fiber.Handler {
 	return func(c *fiber.Ctx) error {
@@ -70,7 +80,7 @@ func RequireDepartment() fiber.Handler {
 			return respondError(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Authentification requise.")
 		}
 
-		// RG has unrestricted department access.
+		// RG has unrestricted department access (write gated by RequireModuleActive).
 		if role == RoleRG {
 			return c.Next()
 		}
@@ -82,6 +92,44 @@ func RequireDepartment() fiber.Handler {
 
 		if dept != role {
 			return respondError(c, fiber.StatusForbidden, "FORBIDDEN", "Accès refusé : ce département ne correspond pas à votre rôle.")
+		}
+
+		return c.Next()
+	}
+}
+
+// RequireModuleActive returns a middleware that blocks mutation requests
+// (PATCH, POST, DELETE) when the target module is inactive in CouchDB.
+//
+// Technicians (lumiere, son) skip this check — their own department is always
+// their responsibility. Only the RG role is subject to module-active gating.
+// Must run after JWTMiddleware.
+func RequireModuleActive(moduleName string, checker ModuleChecker) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		role, ok := c.Locals("role").(string)
+		if !ok || role == "" {
+			return respondError(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Authentification requise.")
+		}
+
+		// Technicians are always allowed to modify their own department.
+		if role != RoleRG {
+			return c.Next()
+		}
+
+		// Only gate mutation methods.
+		method := strings.ToUpper(c.Method())
+		if method != "PATCH" && method != "POST" && method != "DELETE" {
+			return c.Next()
+		}
+
+		active, err := checker.IsActive(c.Context(), moduleName)
+		if err != nil {
+			return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Impossible de vérifier l'état du module.")
+		}
+
+		if !active {
+			return respondError(c, fiber.StatusForbidden, "MODULE_INACTIVE",
+				"Le module '"+moduleName+"' est inactif. Modification refusée.")
 		}
 
 		return c.Next()
