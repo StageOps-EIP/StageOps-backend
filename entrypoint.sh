@@ -82,5 +82,14 @@ create_design "team" '{
   }
 }'
 
+# Vue all pour les projets
+create_design "projects" '{
+  "views": {
+    "all": {
+      "map": "function(doc) { if (doc.type === \"project\") emit(doc._id, null); }"
+    }
+  }
+}'
+
 echo "🚀 Démarrage du serveur..."
 exec ./server
