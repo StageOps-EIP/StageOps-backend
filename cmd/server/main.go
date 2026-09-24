@@ -68,7 +68,7 @@ func main() {
 
 	equipmentHandler := equipment.NewHandler(equipment.NewService(equipment.NewRepository(sharedCouchCfg), auditRepo))
 	eventsHandler := events.NewHandler(events.NewRepository(sharedCouchCfg))
-	incidentsHandler := incidents.NewHandler(incidents.NewRepository(sharedCouchCfg))
+	incidentsHandler := incidents.NewHandler(incidents.NewService(incidents.NewRepository(sharedCouchCfg), auditRepo))
 	teamHandler := team.NewHandler(team.NewRepository(sharedCouchCfg))
 
 	rateLimitResponse := func(c *fiber.Ctx) error {
@@ -127,12 +127,12 @@ func main() {
 	eventsGroup.Patch("/:id", eventsHandler.Update)
 	eventsGroup.Delete("/:id", auth.RequireRole(auth.RoleRG), eventsHandler.Delete)
 
-	incidentsGroup := api.Group("/incidents", auth.JWTMiddleware(jwtSecret))
+	incidentsGroup := api.Group("/projects/:projectId/incidents/:module", auth.JWTMiddleware(jwtSecret), auth.RequireProjectModule("", projectService))
 	incidentsGroup.Get("/", incidentsHandler.List)
 	incidentsGroup.Post("/", incidentsHandler.Create)
 	incidentsGroup.Get("/:id", incidentsHandler.Get)
 	incidentsGroup.Patch("/:id", incidentsHandler.Update)
-	incidentsGroup.Delete("/:id", auth.RequireRole(auth.RoleRG), incidentsHandler.Delete)
+	incidentsGroup.Delete("/:id", incidentsHandler.Delete)
 
 	teamGroup := api.Group("/team", auth.JWTMiddleware(jwtSecret))
 	teamGroup.Get("/", teamHandler.List)
