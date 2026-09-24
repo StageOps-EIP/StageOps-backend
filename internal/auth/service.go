@@ -31,6 +31,7 @@ type AuthService interface {
 	Login(ctx context.Context, email, password string) (string, error)
 	GetUser(ctx context.Context, id string) (*UserPublic, error)
 	UpdateUserRole(ctx context.Context, targetID, newRole, authorID, authorRole string) (*UserPublic, error)
+	UpdateUserModules(ctx context.Context, targetID string, assignedModules []string, authorID, authorRole string) (*UserPublic, error)
 }
 
 // Service implements AuthService with a UserRepository and a JWT secret.
@@ -113,13 +114,14 @@ func (s *Service) Register(ctx context.Context, email, password string) (string,
 
 	now := time.Now().UTC()
 	user := &User{
-		ID:           fmt.Sprintf("user::%s", uuid.New().String()),
-		Type:         "user",
-		Email:        email,
-		Role:         DefaultRole,
-		PasswordHash: hash,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:              fmt.Sprintf("user::%s", uuid.New().String()),
+		Type:            "user",
+		Email:           email,
+		Role:            DefaultRole,
+		AssignedModules: []string{DefaultRole},
+		PasswordHash:    hash,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 
 	if err := s.repo.Create(ctx, user); err != nil {
@@ -129,7 +131,7 @@ func (s *Service) Register(ctx context.Context, email, password string) (string,
 		return "", fmt.Errorf("creating user: %w", err)
 	}
 
-	token, err := generateToken(user.ID, user.Email, user.Role, s.jwtSecret)
+	token, err := generateTokenWithModules(user.ID, user.Email, user.Role, user.AssignedModules, s.jwtSecret)
 	if err != nil {
 		return "", fmt.Errorf("generating token: %w", err)
 	}
@@ -168,8 +170,11 @@ func (s *Service) Login(ctx context.Context, email, password string) (string, er
 		user.UpdatedAt = time.Now().UTC()
 		_ = s.repo.UpdateUser(ctx, user) // best-effort: don't block a successful login
 	}
-
-	token, err := generateToken(user.ID, user.Email, user.Role, s.jwtSecret)
+	assignedModules := user.AssignedModules
+	if assignedModules == nil {
+		assignedModules = []string{user.Role}
+	}
+	token, err := generateTokenWithModules(user.ID, user.Email, user.Role, assignedModules, s.jwtSecret)
 	if err != nil {
 		return "", fmt.Errorf("generating token: %w", err)
 	}
@@ -202,10 +207,11 @@ func (s *Service) GetUser(ctx context.Context, id string) (*UserPublic, error) {
 	}
 
 	return &UserPublic{
-		ID:        user.ID,
-		Email:     user.Email,
-		Role:      user.Role,
-		CreatedAt: user.CreatedAt,
+		ID:              user.ID,
+		Email:           user.Email,
+		Role:            user.Role,
+		AssignedModules: append([]string(nil), user.AssignedModules...),
+		CreatedAt:       user.CreatedAt,
 	}, nil
 }
 
@@ -235,11 +241,80 @@ func (s *Service) UpdateUserRole(ctx context.Context, targetID, newRole, authorI
 	s.logRoleChange(ctx, authorID, authorRole, targetID, oldRole, newRole)
 
 	return &UserPublic{
-		ID:        user.ID,
-		Email:     user.Email,
-		Role:      user.Role,
-		CreatedAt: user.CreatedAt,
+		ID:              user.ID,
+		Email:           user.Email,
+		Role:            user.Role,
+		AssignedModules: append([]string(nil), user.AssignedModules...),
+		CreatedAt:       user.CreatedAt,
 	}, nil
+}
+
+// UpdateUserModules replaces the operational modules assigned to a user.
+func (s *Service) UpdateUserModules(ctx context.Context, targetID string, assignedModules []string, authorID, authorRole string) (*UserPublic, error) {
+	modules, err := normalizeAssignedModules(assignedModules)
+	if err != nil {
+		return nil, err
+	}
+
+	user, err := s.repo.FindByID(ctx, targetID)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("finding user: %w", err)
+	}
+
+	previous := append([]string(nil), user.AssignedModules...)
+	user.AssignedModules = modules
+	user.UpdatedAt = time.Now().UTC()
+	if err := s.repo.UpdateUser(ctx, user); err != nil {
+		return nil, fmt.Errorf("updating user modules: %w", err)
+	}
+
+	s.logModuleAssignment(ctx, authorID, authorRole, targetID, previous, modules)
+	return &UserPublic{
+		ID:              user.ID,
+		Email:           user.Email,
+		Role:            user.Role,
+		AssignedModules: append([]string(nil), user.AssignedModules...),
+		CreatedAt:       user.CreatedAt,
+	}, nil
+}
+
+func normalizeAssignedModules(input []string) ([]string, error) {
+	if len(input) == 0 {
+		return []string{}, nil
+	}
+	seen := make(map[string]bool, len(input))
+	result := make([]string, 0, len(input))
+	for _, name := range input {
+		normalized := normalizeModuleName(name)
+		if normalized != RoleLumiere && normalized != RoleSon && normalized != RolePlateau {
+			return nil, &ValidationError{Message: fmt.Sprintf("Module invalide : %q. Valeurs acceptées : lumiere, son, plateau.", name)}
+		}
+		if !seen[normalized] {
+			seen[normalized] = true
+			result = append(result, normalized)
+		}
+	}
+	return result, nil
+}
+
+func (s *Service) logModuleAssignment(ctx context.Context, authorID, authorRole, targetID string, before, after []string) {
+	if s.auditRepo == nil {
+		return
+	}
+	payload, _ := json.Marshal(map[string][]string{"before": before, "after": after})
+	_ = s.auditRepo.Log(ctx, audit.AuditEntry{
+		ID:         fmt.Sprintf("audit::%s", uuid.NewString()),
+		Type:       "audit",
+		Action:     audit.ActionUserModulesUpdated,
+		AuthorID:   authorID,
+		AuthorRole: authorRole,
+		TargetID:   targetID,
+		Payload:    payload,
+		CreatedAt:  time.Now().UTC(),
+	})
 }
 
 // logRoleChange writes a ROLE_CHANGED audit entry. Failures are swallowed

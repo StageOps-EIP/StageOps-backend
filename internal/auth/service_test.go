@@ -345,3 +345,39 @@ func TestUpdateUserRole_AuditLogFailureDoesNotBlockUpdate(t *testing.T) {
 	repo.AssertExpectations(t)
 	auditRepo.AssertExpectations(t)
 }
+
+func TestUpdateUserModules_Success(t *testing.T) {
+	repo := new(mockUserRepo)
+	auditRepo := new(mockAuditRepo)
+	svc := NewService(repo, auditRepo, "test-secret")
+	user := &User{
+		ID:              "user::target",
+		Email:           "tech@example.com",
+		Role:            RoleLumiere,
+		AssignedModules: []string{RoleLumiere},
+	}
+	repo.On("FindByID", mock.Anything, user.ID).Return(user, nil)
+	repo.On("UpdateUser", mock.Anything, mock.Anything).Return(nil)
+	auditRepo.On("Log", mock.Anything, mock.MatchedBy(func(entry audit.AuditEntry) bool {
+		return entry.Action == audit.ActionUserModulesUpdated && entry.TargetID == user.ID
+	})).Return(nil)
+
+	result, err := svc.UpdateUserModules(
+		context.Background(), user.ID,
+		[]string{"lighting", "son", "lighting"}, "user::rg", RoleRG,
+	)
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{RoleLumiere, RoleSon}, result.AssignedModules)
+	repo.AssertExpectations(t)
+	auditRepo.AssertExpectations(t)
+}
+
+func TestUpdateUserModules_InvalidModule(t *testing.T) {
+	svc := NewService(new(mockUserRepo), nil, "test-secret")
+
+	_, err := svc.UpdateUserModules(context.Background(), "user::target", []string{"video"}, "user::rg", RoleRG)
+
+	var validErr *ValidationError
+	assert.ErrorAs(t, err, &validErr)
+}

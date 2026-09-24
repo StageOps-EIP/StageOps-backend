@@ -46,6 +46,14 @@ func (m *mockAuthService) UpdateUserRole(ctx context.Context, targetID, newRole,
 	return args.Get(0).(*UserPublic), args.Error(1)
 }
 
+func (m *mockAuthService) UpdateUserModules(ctx context.Context, targetID string, assignedModules []string, authorID, authorRole string) (*UserPublic, error) {
+	args := m.Called(ctx, targetID, assignedModules, authorID, authorRole)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*UserPublic), args.Error(1)
+}
+
 // --- Helpers ---
 
 func newTestApp(svc AuthService, jwtSecret string) *fiber.App {
@@ -62,8 +70,28 @@ func newTestApp(svc AuthService, jwtSecret string) *fiber.App {
 
 	usersGroup := api.Group("/users", JWTMiddleware(jwtSecret))
 	usersGroup.Patch("/:id/role", RequireRole(RoleRG), h.UpdateUserRole)
+	usersGroup.Patch("/:id/modules", RequireRole(RoleRG), h.UpdateUserModules)
 
 	return app
+}
+
+func TestUpdateUserModulesHandler_Success(t *testing.T) {
+	svc := new(mockAuthService)
+	app := newTestApp(svc, "test-secret")
+	updated := &UserPublic{
+		ID:              "user::target",
+		AssignedModules: []string{RoleLumiere, RoleSon},
+	}
+	svc.On("UpdateUserModules", mock.Anything, "user::target", []string{RoleLumiere, RoleSon}, "user::rg", RoleRG).
+		Return(updated, nil)
+	token, _ := generateToken("user::rg", "rg@example.com", RoleRG, "test-secret")
+
+	response := patchJSON(app, "/api/users/user::target/modules", map[string]interface{}{
+		"assigned_modules": []string{RoleLumiere, RoleSon},
+	}, token)
+
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+	svc.AssertExpectations(t)
 }
 
 func postJSON(app *fiber.App, path string, body interface{}) *http.Response {
