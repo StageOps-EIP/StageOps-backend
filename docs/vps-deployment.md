@@ -27,6 +27,8 @@ openssl rand -base64 48
 
 Le secret JWT et le mot de passe CouchDB doivent être différents.
 
+`BOOTSTRAP_ADMIN_EMAIL` et `BOOTSTRAP_ADMIN_PASSWORD` créent le premier régisseur général uniquement lorsqu'aucun compte `rg` n'existe. Après le premier déploiement réussi, retirer ces deux variables de `.env.production`, puis relancer le déploiement. L'inscription publique reste désactivée par défaut.
+
 Déployer ensuite :
 
 ```bash
@@ -34,6 +36,8 @@ sh ./deploy/deploy.sh
 ```
 
 Caddy demande et renouvelle automatiquement le certificat TLS lorsque `API_DOMAIN` pointe vers le VPS et que les ports 80/443 sont accessibles.
+
+Cette configuration force TLS 1.3. Le modèle de données actuel n'isole pas encore plusieurs théâtres : utiliser ce déploiement pour une instance mono-théâtre avec comptes administrés, jusqu'à l'ajout du tenant aux documents et aux autorisations.
 
 ## Vérifications
 
@@ -52,11 +56,19 @@ docker compose --env-file .env.production -f docker-compose.prod.yml logs --tail
 sh ./deploy/backup.sh
 ```
 
-La sauvegarde arrête brièvement CouchDB et le backend afin d'obtenir un snapshot cohérent du volume. Copier ensuite l'archive chiffrée vers un stockage extérieur au VPS. Une sauvegarde laissée uniquement sur le VPS ne protège pas d'une perte de machine.
+La sauvegarde arrête brièvement CouchDB et le backend afin d'obtenir un snapshot cohérent du volume. L'archive produite n'est pas chiffrée. La chiffrer avant de la copier vers un stockage extérieur au VPS, par exemple avec :
+
+```bash
+openssl enc -aes-256-cbc -salt -pbkdf2 \
+  -in backups/stageops-couchdb-YYYYMMDDTHHMMSSZ.tar.gz \
+  -out backups/stageops-couchdb-YYYYMMDDTHHMMSSZ.tar.gz.enc
+```
+
+Une sauvegarde laissée uniquement sur le VPS ne protège pas d'une perte de machine. Configurer ensuite une exécution planifiée et une politique de rétention adaptées à l'exploitation.
 
 Tester régulièrement une restauration sur un environnement séparé. Ne jamais restaurer directement en production sans sauvegarde préalable et fenêtre de maintenance.
 
-La restauration remplace entièrement le volume CouchDB et exige une confirmation explicite :
+La restauration valide d'abord l'archive dans un volume temporaire, conserve un volume de rollback pendant l'opération, puis remplace le volume CouchDB. Elle exige une confirmation explicite :
 
 ```bash
 sh ./deploy/restore.sh /chemin/absolu/stageops-couchdb-YYYYMMDDTHHMMSSZ.tar.gz --confirm
