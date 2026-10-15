@@ -4,11 +4,12 @@ API REST de StageOps pour la gestion des projets scéniques, des équipes, du ma
 
 ## Stack
 
-- Go 1.21
+- Go 1.27
 - Fiber v2
 - CouchDB via son API HTTP
 - JWT HS256 et bcrypt
 - Docker
+- PouchDB côté client pour le mode offline-first (intégration frontend)
 
 ## Fonctionnalités disponibles
 
@@ -75,7 +76,28 @@ go mod download
 go run ./cmd/server
 ```
 
-Le script `entrypoint.sh` attend CouchDB, crée la base et initialise les vues nécessaires avant de lancer le serveur.
+Le script `entrypoint.sh` attend CouchDB, crée la base et applique les versions courantes des vues avant de lancer le serveur.
+
+## Déploiement sur un VPS
+
+Le déploiement de production fournit :
+
+- CouchDB persistant sur un réseau Docker privé ;
+- le backend exécuté par un utilisateur non-root ;
+- Caddy comme reverse proxy avec HTTPS automatique ;
+- des healthchecks distincts pour le processus et CouchDB ;
+- une rotation des logs et des limites CPU/RAM ;
+- un script de sauvegarde cohérente du volume CouchDB.
+
+```bash
+cp .env.production.example .env.production
+# Remplacer les domaines et secrets, puis :
+sh ./deploy/deploy.sh
+```
+
+La procédure complète se trouve dans [`docs/vps-deployment.md`](docs/vps-deployment.md). CouchDB n'est volontairement pas exposé publiquement : la réplication PouchDB devra utiliser une authentification dédiée et un scope par théâtre/projet, jamais le compte administrateur du backend.
+
+Le choix Go Fiber + PouchDB/CouchDB est consigné dans [`docs/adr/0001-go-fiber-pouchdb-couchdb.md`](docs/adr/0001-go-fiber-pouchdb-couchdb.md).
 
 ## API principale
 
@@ -94,6 +116,8 @@ Toutes les routes protégées attendent `Authorization: Bearer <token>`.
 | `GET, PATCH, DELETE` | `/api/projects/:projectId/equipment/:module/:id` | module attribué |
 | `GET, POST` | `/api/projects/:projectId/incidents/:module/` | module attribué |
 | `GET, PATCH, DELETE` | `/api/projects/:projectId/incidents/:module/:id` | module attribué |
+| `GET` | `/api/health/live` | public, processus HTTP |
+| `GET` | `/api/health/ready` | public, processus et CouchDB |
 
 Les mutations de matériel et d'incidents sont bloquées quand le module correspondant est inactif dans le projet. Les erreurs suivent cette enveloppe :
 
