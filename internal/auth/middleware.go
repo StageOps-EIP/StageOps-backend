@@ -133,7 +133,7 @@ func RequireProjectModule(moduleName string, checker ProjectModuleChecker) fiber
 		if projectID == "" {
 			return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Identifiant projet manquant.")
 		}
-		active, err := checker.IsModuleActive(c.Context(), projectID, targetModule)
+		active, err := checker.IsModuleActive(c.UserContext(), projectID, targetModule)
 		if err != nil {
 			return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Impossible de vérifier l'état du module du projet.")
 		}
@@ -262,7 +262,7 @@ func RequireModuleActive(moduleName string, checker ModuleChecker) fiber.Handler
 			return c.Next()
 		}
 
-		active, err := checker.IsActive(c.Context(), moduleName)
+		active, err := checker.IsActive(c.UserContext(), moduleName)
 		if err != nil {
 			return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Impossible de vérifier l'état du module.")
 		}

@@ -18,7 +18,7 @@ func NewHandler(service ModuleService) *Handler {
 
 // GetAll handles GET /api/modules.
 func (h *Handler) GetAll(c *fiber.Ctx) error {
-	mods, err := h.service.GetAll(c.Context())
+	mods, err := h.service.GetAll(c.UserContext())
 	if err != nil {
 		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Une erreur interne est survenue.")
 	}
@@ -36,7 +36,7 @@ func (h *Handler) Toggle(c *fiber.Ctx) error {
 	authorID, _ := c.Locals("user_id").(string)
 	authorRole, _ := c.Locals("role").(string)
 
-	mod, err := h.service.Toggle(c.Context(), name, authorID, authorRole)
+	mod, err := h.service.Toggle(c.UserContext(), name, authorID, authorRole)
 	if err != nil {
 		if errors.Is(err, ErrModuleNotFound) {
 			return respondError(c, fiber.StatusNotFound, "NOT_FOUND", "Module non trouvé.")

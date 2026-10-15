@@ -11,7 +11,7 @@ type Handler struct{ service EquipmentService }
 func NewHandler(service EquipmentService) *Handler { return &Handler{service: service} }
 
 func (h *Handler) List(c *fiber.Ctx) error {
-	items, err := h.service.List(c.Context(), c.Params("projectId"), c.Params("module"))
+	items, err := h.service.List(c.UserContext(), c.Params("projectId"), c.Params("module"))
 	if err != nil {
 		return mapError(c, err)
 	}
@@ -19,7 +19,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 }
 
 func (h *Handler) Get(c *fiber.Ctx) error {
-	item, err := h.service.Get(c.Context(), c.Params("projectId"), c.Params("module"), c.Params("id"))
+	item, err := h.service.Get(c.UserContext(), c.Params("projectId"), c.Params("module"), c.Params("id"))
 	if err != nil {
 		return mapError(c, err)
 	}
@@ -31,7 +31,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	if err := c.BodyParser(&input); err != nil {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Corps de requête invalide.")
 	}
-	item, err := h.service.Create(c.Context(), c.Params("projectId"), c.Params("module"), input, local(c, "user_id"), local(c, "role"))
+	item, err := h.service.Create(c.UserContext(), c.Params("projectId"), c.Params("module"), input, local(c, "user_id"), local(c, "role"))
 	if err != nil {
 		return mapError(c, err)
 	}
@@ -43,7 +43,7 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 	if err := c.BodyParser(&input); err != nil {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Corps de requête invalide.")
 	}
-	item, err := h.service.Update(c.Context(), c.Params("projectId"), c.Params("module"), c.Params("id"), input, local(c, "user_id"), local(c, "role"))
+	item, err := h.service.Update(c.UserContext(), c.Params("projectId"), c.Params("module"), c.Params("id"), input, local(c, "user_id"), local(c, "role"))
 	if err != nil {
 		return mapError(c, err)
 	}
@@ -51,7 +51,7 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 }
 
 func (h *Handler) Delete(c *fiber.Ctx) error {
-	err := h.service.Delete(c.Context(), c.Params("projectId"), c.Params("module"), c.Params("id"), local(c, "user_id"), local(c, "role"))
+	err := h.service.Delete(c.UserContext(), c.Params("projectId"), c.Params("module"), c.Params("id"), local(c, "user_id"), local(c, "role"))
 	if err != nil {
 		return mapError(c, err)
 	}

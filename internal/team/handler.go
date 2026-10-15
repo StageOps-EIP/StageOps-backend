@@ -15,7 +15,7 @@ func NewHandler(repo *Repository) *Handler {
 }
 
 func (h *Handler) List(c *fiber.Ctx) error {
-	items, err := h.repo.List(c.Context())
+	items, err := h.repo.List(c.UserContext())
 	if err != nil {
 		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Erreur lors de la récupération des membres.")
 	}
@@ -23,7 +23,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 }
 
 func (h *Handler) Get(c *fiber.Ctx) error {
-	item, err := h.repo.FindByID(c.Context(), c.Params("id"))
+	item, err := h.repo.FindByID(c.UserContext(), c.Params("id"))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return respondError(c, fiber.StatusNotFound, "NOT_FOUND", "Membre introuvable.")
@@ -39,7 +39,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Corps de requête invalide.")
 	}
 
-	item, err := h.repo.Create(c.Context(), &input)
+	item, err := h.repo.Create(c.UserContext(), &input)
 	if err != nil {
 		return mapError(c, err)
 	}
@@ -52,7 +52,7 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Corps de requête invalide.")
 	}
 
-	item, err := h.repo.Update(c.Context(), c.Params("id"), &input)
+	item, err := h.repo.Update(c.UserContext(), c.Params("id"), &input)
 	if err != nil {
 		return mapError(c, err)
 	}
@@ -60,7 +60,7 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 }
 
 func (h *Handler) Delete(c *fiber.Ctx) error {
-	if err := h.repo.Delete(c.Context(), c.Params("id")); err != nil {
+	if err := h.repo.Delete(c.UserContext(), c.Params("id")); err != nil {
 		return mapError(c, err)
 	}
 	return c.SendStatus(fiber.StatusNoContent)
