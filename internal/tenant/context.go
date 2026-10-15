@@ -1,6 +1,12 @@
 package tenant
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrMissing is returned when a protected data operation has no tenant scope.
+var ErrMissing = errors.New("theatre scope missing")
 
 type contextKey struct{}
 
@@ -13,4 +19,13 @@ func WithTheatreID(ctx context.Context, theatreID string) context.Context {
 func TheatreID(ctx context.Context) (string, bool) {
 	value, ok := ctx.Value(contextKey{}).(string)
 	return value, ok && value != ""
+}
+
+// RequireTheatreID returns the authenticated theatre or a typed error.
+func RequireTheatreID(ctx context.Context) (string, error) {
+	theatreID, ok := TheatreID(ctx)
+	if !ok {
+		return "", ErrMissing
+	}
+	return theatreID, nil
 }

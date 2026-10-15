@@ -167,12 +167,31 @@ func (c *Client) DeleteDoc(ctx context.Context, id, rev string) error {
 // ListByView queries _design/{design}/_view/{view}?include_docs=true and
 // unmarshals the doc field of every row into dest (must be a pointer to a slice).
 func (c *Client) ListByView(ctx context.Context, design, view string, dest interface{}) error {
+	return c.listByView(ctx, design, view, "", dest)
+}
+
+// ListByViewKey queries a view using an exact JSON string key.
+func (c *Client) ListByViewKey(ctx context.Context, design, view, key string, dest interface{}) error {
+	return c.listByView(ctx, design, view, key, dest)
+}
+
+func (c *Client) listByView(ctx context.Context, design, view, key string, dest interface{}) error {
+	query := url.Values{}
+	query.Set("include_docs", "true")
+	if key != "" {
+		encodedKey, err := json.Marshal(key)
+		if err != nil {
+			return fmt.Errorf("encoding view key: %w", err)
+		}
+		query.Set("key", string(encodedKey))
+	}
 	rawURL := fmt.Sprintf(
-		"%s/%s/_design/%s/_view/%s?include_docs=true",
+		"%s/%s/_design/%s/_view/%s?%s",
 		c.cfg.BaseURL,
 		url.PathEscape(c.cfg.DB),
 		url.PathEscape(design),
 		url.PathEscape(view),
+		query.Encode(),
 	)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
