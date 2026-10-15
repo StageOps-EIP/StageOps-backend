@@ -22,4 +22,3 @@ docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" pull caddy
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --pull couchdb backend
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
-

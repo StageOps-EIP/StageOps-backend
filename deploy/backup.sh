@@ -26,4 +26,3 @@ docker run --rm \
 
 chmod 600 "$BACKUP_DIR/$ARCHIVE"
 echo "Backup created: $BACKUP_DIR/$ARCHIVE"
-

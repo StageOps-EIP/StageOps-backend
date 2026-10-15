@@ -82,4 +82,3 @@ Avant d'activer la réplication PouchDB, ajouter un accès de synchronisation di
 - interdiction de répliquer les utilisateurs, rôles et entrées d'audit ;
 - validation serveur des contraintes DMX et des mutations sensibles ;
 - tests de conflits, reconnexion et idempotence.
-

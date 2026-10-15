@@ -109,4 +109,3 @@ volumes:
   couchdb_data:
   caddy_data:
   caddy_config:
-

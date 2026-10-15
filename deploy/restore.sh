@@ -47,4 +47,3 @@ docker run --rm \
   tar -xzf "/backup/$ARCHIVE_NAME" -C /data
 
 echo "Restore completed from $ARCHIVE"
-

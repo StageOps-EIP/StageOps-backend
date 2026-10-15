@@ -21,4 +21,3 @@ Les benchmarks StageOps ont comparé les frameworks backend et les solutions de 
 - Les contraintes sensibles, notamment les permissions et conflits DMX, restent validées par Go.
 - La réplication doit être testée sur les scénarios hors ligne, reconnexion, concurrence, retry et idempotence.
 - Le déploiement doit sauvegarder le volume CouchDB et tester régulièrement sa restauration.
-
