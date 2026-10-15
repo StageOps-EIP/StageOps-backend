@@ -4,6 +4,9 @@
 
 {$API_DOMAIN} {
 	encode zstd gzip
+	tls {
+		protocols tls1.3
+	}
 
 	header {
 		-Server
