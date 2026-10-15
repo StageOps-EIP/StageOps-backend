@@ -110,5 +110,6 @@ networks:
 
 volumes:
   couchdb_data:
+    name: stageops_couchdb_data
   caddy_data:
   caddy_config:

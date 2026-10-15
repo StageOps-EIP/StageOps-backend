@@ -25,4 +25,4 @@ docker run --rm \
   tar -czf "/backup/$ARCHIVE" -C /data .
 
 chmod 600 "$BACKUP_DIR/$ARCHIVE"
-echo "Backup created: $BACKUP_DIR/$ARCHIVE"
+echo "Backup created (not encrypted): $BACKUP_DIR/$ARCHIVE"
