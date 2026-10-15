@@ -59,26 +59,32 @@ func run() error {
 
 	couchCfg := auth.CouchConfig{
 		BaseURL:  mustEnv("COUCHDB_URL"),
-		DB:       mustEnv("COUCHDB_DB"),
+		DB:       envOr("COUCHDB_AUTH_DB", "stageops_auth"),
 		Username: mustEnv("COUCHDB_USER"),
 		Password: mustEnv("COUCHDB_PASSWORD"),
 	}
 	sharedCouchCfg := couch.Config{
 		BaseURL:  couchCfg.BaseURL,
-		DB:       couchCfg.DB,
+		DB:       mustEnv("COUCHDB_DB"),
 		Username: couchCfg.Username,
 		Password: couchCfg.Password,
 	}
 
 	authRepo := auth.NewCouchDBRepository(couchCfg)
-	auditRepo := audit.NewCouchDBRepository(audit.CouchConfig{
+	authAuditRepo := audit.NewCouchDBRepository(audit.CouchConfig{
 		BaseURL:  couchCfg.BaseURL,
 		DB:       couchCfg.DB,
 		Username: couchCfg.Username,
 		Password: couchCfg.Password,
 	})
+	auditRepo := audit.NewCouchDBRepository(audit.CouchConfig{
+		BaseURL:  sharedCouchCfg.BaseURL,
+		DB:       sharedCouchCfg.DB,
+		Username: sharedCouchCfg.Username,
+		Password: sharedCouchCfg.Password,
+	})
 	jwtSecret := mustSecret("JWT_SECRET", 32)
-	authService := auth.NewService(authRepo, auditRepo, jwtSecret)
+	authService := auth.NewService(authRepo, authAuditRepo, jwtSecret)
 	if err := bootstrapAdminFromEnv(authService); err != nil {
 		return err
 	}
