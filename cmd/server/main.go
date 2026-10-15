@@ -84,12 +84,19 @@ func run() error {
 		Password: sharedCouchCfg.Password,
 	})
 	jwtSecret := mustSecret("JWT_SECRET", 32)
-	authService := auth.NewService(authRepo, authAuditRepo, jwtSecret)
+	jwtConfig := auth.JWTConfig{
+		Secret: jwtSecret, Issuer: envOr("JWT_ISSUER", "stageops-api"),
+		Audience: envOr("JWT_AUDIENCE", "stageops-clients"), TTL: 15 * time.Minute,
+	}
+	authService := auth.NewServiceWithConfig(authRepo, authAuditRepo, auth.ServiceConfig{
+		JWT: jwtConfig, UserIDSecret: mustSecret("USER_ID_SECRET", 32),
+		RegistrationTheatreID: mustEnv("DEFAULT_THEATRE_ID"),
+	})
 	if err := bootstrapAdminFromEnv(authService); err != nil {
 		return err
 	}
 	authHandler := auth.NewHandler(authService)
-	authenticate := auth.JWTMiddleware(jwtSecret, authRepo)
+	authenticate := auth.JWTMiddlewareWithConfig(jwtConfig, authRepo)
 
 	moduleRepo := modules.NewCouchDBRepository(modules.CouchConfig{
 		BaseURL:  couchCfg.BaseURL,

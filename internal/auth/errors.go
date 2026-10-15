@@ -7,6 +7,7 @@ var (
 	ErrEmailAlreadyExists = errors.New("email already exists")
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrAccountLocked      = errors.New("account locked")
+	ErrForbidden          = errors.New("forbidden")
 )
 
 // ValidationError carries a user-facing message for input validation failures.

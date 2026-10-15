@@ -8,6 +8,7 @@ type User struct {
 	Rev             string     `json:"_rev,omitempty"`
 	Type            string     `json:"type"`
 	Email           string     `json:"email"`
+	TheatreID       string     `json:"theatre_id"`
 	Role            string     `json:"role"`
 	AssignedModules []string   `json:"assigned_modules"`
 	PasswordHash    string     `json:"password_hash"`
@@ -21,6 +22,7 @@ type User struct {
 type UserPublic struct {
 	ID              string    `json:"id"`
 	Email           string    `json:"email"`
+	TheatreID       string    `json:"theatre_id"`
 	Role            string    `json:"role"`
 	AssignedModules []string  `json:"assigned_modules"`
 	CreatedAt       time.Time `json:"created_at"`

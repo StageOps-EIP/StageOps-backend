@@ -7,10 +7,15 @@ import (
 	"time"
 
 	"github.com/stageops/backend/internal/audit"
+	"github.com/stageops/backend/internal/tenant"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"golang.org/x/crypto/bcrypt"
 )
+
+func tenantContext() context.Context {
+	return tenant.WithTheatreID(context.Background(), "theatre-default")
+}
 
 // --- Mock repository ---
 
@@ -328,15 +333,16 @@ func TestUpdateUserRole_Success(t *testing.T) {
 	svc := NewService(repo, auditRepo, "test-secret")
 
 	user := &User{
-		ID:    "user::target",
-		Email: "target@example.com",
-		Role:  RolePlateau,
+		ID:        "user::target",
+		Email:     "target@example.com",
+		TheatreID: "theatre-default",
+		Role:      RolePlateau,
 	}
 	repo.On("FindByID", mock.Anything, "user::target").Return(user, nil)
 	repo.On("UpdateUser", mock.Anything, mock.Anything).Return(nil)
 	auditRepo.On("Log", mock.Anything, mock.Anything).Return(nil)
 
-	result, err := svc.UpdateUserRole(context.Background(), "user::target", RoleSon, "user::rg", RoleRG)
+	result, err := svc.UpdateUserRole(tenantContext(), "user::target", RoleSon, "user::rg", RoleRG)
 	assert.NoError(t, err)
 	assert.Equal(t, RoleSon, result.Role)
 	assert.Equal(t, RoleSon, user.Role) // document was mutated
@@ -366,21 +372,35 @@ func TestUpdateUserRole_UserNotFound(t *testing.T) {
 	repo.AssertExpectations(t)
 }
 
+func TestUpdateUserRoleRejectsAnotherTheatre(t *testing.T) {
+	repo := new(mockUserRepo)
+	svc := NewService(repo, nil, "test-secret")
+	repo.On("FindByID", mock.Anything, "user::target").Return(&User{
+		ID: "user::target", TheatreID: "theatre::other", Role: RolePlateau,
+	}, nil)
+
+	_, err := svc.UpdateUserRole(tenantContext(), "user::target", RoleSon, "user::rg", RoleRG)
+
+	assert.ErrorIs(t, err, ErrForbidden)
+	repo.AssertNotCalled(t, "UpdateUser")
+}
+
 func TestUpdateUserRole_AuditLogFailureDoesNotBlockUpdate(t *testing.T) {
 	repo := new(mockUserRepo)
 	auditRepo := new(mockAuditRepo)
 	svc := NewService(repo, auditRepo, "test-secret")
 
 	user := &User{
-		ID:    "user::target",
-		Email: "target@example.com",
-		Role:  RolePlateau,
+		ID:        "user::target",
+		Email:     "target@example.com",
+		TheatreID: "theatre-default",
+		Role:      RolePlateau,
 	}
 	repo.On("FindByID", mock.Anything, "user::target").Return(user, nil)
 	repo.On("UpdateUser", mock.Anything, mock.Anything).Return(nil)
 	auditRepo.On("Log", mock.Anything, mock.Anything).Return(errors.New("couch unreachable"))
 
-	result, err := svc.UpdateUserRole(context.Background(), "user::target", RoleSon, "user::rg", RoleRG)
+	result, err := svc.UpdateUserRole(tenantContext(), "user::target", RoleSon, "user::rg", RoleRG)
 	// The role update succeeded even though the audit log failed.
 	assert.NoError(t, err)
 	assert.Equal(t, RoleSon, result.Role)
@@ -395,6 +415,7 @@ func TestUpdateUserModules_Success(t *testing.T) {
 	user := &User{
 		ID:              "user::target",
 		Email:           "tech@example.com",
+		TheatreID:       "theatre-default",
 		Role:            RoleLumiere,
 		AssignedModules: []string{RoleLumiere},
 	}
@@ -405,7 +426,7 @@ func TestUpdateUserModules_Success(t *testing.T) {
 	})).Return(nil)
 
 	result, err := svc.UpdateUserModules(
-		context.Background(), user.ID,
+		tenantContext(), user.ID,
 		[]string{"lighting", "son", "lighting"}, "user::rg", RoleRG,
 	)
 

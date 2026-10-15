@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stageops/backend/internal/audit"
+	"github.com/stageops/backend/internal/tenant"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -39,14 +40,35 @@ type AuthService interface {
 
 // Service implements AuthService with a UserRepository and a JWT secret.
 type Service struct {
-	repo      UserRepository
-	auditRepo audit.Repository
-	jwtSecret string
+	repo                UserRepository
+	auditRepo           audit.Repository
+	jwtConfig           JWTConfig
+	userIDSecret        string
+	registrationTheatre string
+}
+
+// ServiceConfig contains security-sensitive auth configuration.
+type ServiceConfig struct {
+	JWT                   JWTConfig
+	UserIDSecret          string
+	RegistrationTheatreID string
 }
 
 // NewService creates a new Service. auditRepo may be nil to disable audit logging.
 func NewService(repo UserRepository, auditRepo audit.Repository, jwtSecret string) *Service {
-	return &Service{repo: repo, auditRepo: auditRepo, jwtSecret: jwtSecret}
+	return NewServiceWithConfig(repo, auditRepo, ServiceConfig{
+		JWT:                   defaultJWTConfig(jwtSecret),
+		UserIDSecret:          jwtSecret,
+		RegistrationTheatreID: "theatre-default",
+	})
+}
+
+// NewServiceWithConfig creates a service with explicit token and tenant settings.
+func NewServiceWithConfig(repo UserRepository, auditRepo audit.Repository, cfg ServiceConfig) *Service {
+	return &Service{
+		repo: repo, auditRepo: auditRepo, jwtConfig: cfg.JWT,
+		userIDSecret: cfg.UserIDSecret, registrationTheatre: cfg.RegistrationTheatreID,
+	}
 }
 
 // validateEmail returns true when email matches a practical RFC 5322 subset.
@@ -117,9 +139,10 @@ func (s *Service) Register(ctx context.Context, email, password string) (string,
 
 	now := time.Now().UTC()
 	user := &User{
-		ID:              emailDocumentID(email, s.jwtSecret),
+		ID:              emailDocumentID(email, s.userIDSecret),
 		Type:            "user",
 		Email:           email,
+		TheatreID:       s.registrationTheatre,
 		Role:            DefaultRole,
 		AssignedModules: []string{DefaultRole},
 		PasswordHash:    hash,
@@ -134,7 +157,7 @@ func (s *Service) Register(ctx context.Context, email, password string) (string,
 		return "", fmt.Errorf("creating user: %w", err)
 	}
 
-	token, err := generateTokenWithModules(user.ID, user.Email, user.Role, user.AssignedModules, s.jwtSecret)
+	token, err := s.generateAccessToken(user, uuid.NewString())
 	if err != nil {
 		return "", fmt.Errorf("generating token: %w", err)
 	}
@@ -178,9 +201,10 @@ func (s *Service) BootstrapAdmin(ctx context.Context, email, password string) er
 	}
 	now := time.Now().UTC()
 	user := &User{
-		ID:              emailDocumentID(email, s.jwtSecret),
+		ID:              emailDocumentID(email, s.userIDSecret),
 		Type:            "user",
 		Email:           email,
+		TheatreID:       s.registrationTheatre,
 		Role:            RoleRG,
 		AssignedModules: []string{},
 		PasswordHash:    hash,
@@ -233,12 +257,20 @@ func (s *Service) Login(ctx context.Context, email, password string) (string, er
 	if assignedModules == nil {
 		assignedModules = []string{user.Role}
 	}
-	token, err := generateTokenWithModules(user.ID, user.Email, user.Role, assignedModules, s.jwtSecret)
+	user.AssignedModules = assignedModules
+	token, err := s.generateAccessToken(user, uuid.NewString())
 	if err != nil {
 		return "", fmt.Errorf("generating token: %w", err)
 	}
 
 	return token, nil
+}
+
+func (s *Service) generateAccessToken(user *User, sessionID string) (string, error) {
+	return generateAccessToken(
+		user.ID, user.Email, user.Role, user.TheatreID, user.AssignedModules,
+		sessionID, s.jwtConfig, time.Now().UTC(),
+	)
 }
 
 // recordFailedAttempt increments the failure counter and locks the account
@@ -268,6 +300,7 @@ func (s *Service) GetUser(ctx context.Context, id string) (*UserPublic, error) {
 	return &UserPublic{
 		ID:              user.ID,
 		Email:           user.Email,
+		TheatreID:       user.TheatreID,
 		Role:            user.Role,
 		AssignedModules: append([]string(nil), user.AssignedModules...),
 		CreatedAt:       user.CreatedAt,
@@ -288,6 +321,9 @@ func (s *Service) UpdateUserRole(ctx context.Context, targetID, newRole, authorI
 		}
 		return nil, fmt.Errorf("finding user: %w", err)
 	}
+	if theatreID, ok := tenant.TheatreID(ctx); !ok || user.TheatreID != theatreID {
+		return nil, ErrForbidden
+	}
 
 	oldRole := user.Role
 	user.Role = newRole
@@ -302,6 +338,7 @@ func (s *Service) UpdateUserRole(ctx context.Context, targetID, newRole, authorI
 	return &UserPublic{
 		ID:              user.ID,
 		Email:           user.Email,
+		TheatreID:       user.TheatreID,
 		Role:            user.Role,
 		AssignedModules: append([]string(nil), user.AssignedModules...),
 		CreatedAt:       user.CreatedAt,
@@ -322,6 +359,9 @@ func (s *Service) UpdateUserModules(ctx context.Context, targetID string, assign
 		}
 		return nil, fmt.Errorf("finding user: %w", err)
 	}
+	if theatreID, ok := tenant.TheatreID(ctx); !ok || user.TheatreID != theatreID {
+		return nil, ErrForbidden
+	}
 
 	previous := append([]string(nil), user.AssignedModules...)
 	user.AssignedModules = modules
@@ -334,6 +374,7 @@ func (s *Service) UpdateUserModules(ctx context.Context, targetID string, assign
 	return &UserPublic{
 		ID:              user.ID,
 		Email:           user.Email,
+		TheatreID:       user.TheatreID,
 		Role:            user.Role,
 		AssignedModules: append([]string(nil), user.AssignedModules...),
 		CreatedAt:       user.CreatedAt,

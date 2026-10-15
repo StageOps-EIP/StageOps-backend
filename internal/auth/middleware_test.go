@@ -166,6 +166,7 @@ func TestJWTMiddlewareUsesCurrentServerSideRole(t *testing.T) {
 		JWTMiddleware(secret, userAccessReaderStub{user: &User{
 			ID:              "user::abc",
 			Email:           "user@example.com",
+			TheatreID:       "theatre-default",
 			Role:            RoleSon,
 			AssignedModules: []string{RoleSon},
 		}}),

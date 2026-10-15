@@ -26,7 +26,7 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Corps de requête invalide.")
 	}
 
-	token, err := h.service.Register(c.Context(), body.Email, body.Password)
+	token, err := h.service.Register(c.UserContext(), body.Email, body.Password)
 	if err != nil {
 		return mapServiceError(c, err)
 	}
@@ -44,7 +44,7 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Corps de requête invalide.")
 	}
 
-	token, err := h.service.Login(c.Context(), body.Email, body.Password)
+	token, err := h.service.Login(c.UserContext(), body.Email, body.Password)
 	if err != nil {
 		return mapServiceError(c, err)
 	}
@@ -59,7 +59,7 @@ func (h *Handler) Me(c *fiber.Ctx) error {
 		return respondError(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Authentification requise.")
 	}
 
-	user, err := h.service.GetUser(c.Context(), userID)
+	user, err := h.service.GetUser(c.UserContext(), userID)
 	if err != nil {
 		return mapServiceError(c, err)
 	}
@@ -85,7 +85,7 @@ func (h *Handler) UpdateUserRole(c *fiber.Ctx) error {
 	authorID, _ := c.Locals("user_id").(string)
 	authorRole, _ := c.Locals("role").(string)
 
-	updated, err := h.service.UpdateUserRole(c.Context(), targetID, body.Role, authorID, authorRole)
+	updated, err := h.service.UpdateUserRole(c.UserContext(), targetID, body.Role, authorID, authorRole)
 	if err != nil {
 		return mapServiceError(c, err)
 	}
@@ -109,7 +109,7 @@ func (h *Handler) UpdateUserModules(c *fiber.Ctx) error {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Le champ 'assigned_modules' est requis.")
 	}
 	updated, err := h.service.UpdateUserModules(
-		c.Context(), targetID, *body.AssignedModules,
+		c.UserContext(), targetID, *body.AssignedModules,
 		localValue(c, "user_id"), localValue(c, "role"),
 	)
 	if err != nil {
@@ -145,6 +145,8 @@ func mapServiceError(c *fiber.Ctx, err error) error {
 		return respondError(c, fiber.StatusUnauthorized, "INVALID_CREDENTIALS", "Identifiants incorrects.")
 	case errors.Is(err, ErrAccountLocked):
 		return respondError(c, fiber.StatusTooManyRequests, "ACCOUNT_LOCKED", "Compte temporairement bloqué suite à plusieurs tentatives échouées. Réessayez dans 15 minutes.")
+	case errors.Is(err, ErrForbidden):
+		return respondError(c, fiber.StatusForbidden, "FORBIDDEN", "Accès refusé pour ce théâtre.")
 	case errors.Is(err, ErrUserNotFound):
 		return respondError(c, fiber.StatusNotFound, "NOT_FOUND", "Utilisateur non trouvé.")
 	default:
