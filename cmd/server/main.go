@@ -72,6 +72,7 @@ func run() error {
 
 	authRepo := auth.NewCouchDBRepository(couchCfg)
 	sessionRepo := auth.NewCouchDBSessionRepository(couchCfg)
+	deviceRepo := auth.NewCouchDBDeviceRepository(couchCfg)
 	authAuditRepo := audit.NewCouchDBRepository(audit.CouchConfig{
 		BaseURL:  couchCfg.BaseURL,
 		DB:       couchCfg.DB,
@@ -88,6 +89,15 @@ func run() error {
 	jwtConfig := auth.JWTConfig{
 		Secret: jwtSecret, Issuer: envOr("JWT_ISSUER", "stageops-api"),
 		Audience: envOr("JWT_AUDIENCE", "stageops-clients"), TTL: 15 * time.Minute,
+	}
+	offlineSigner, err := auth.NewOfflineSigner(auth.OfflineSignerConfig{
+		PrivateKeyBase64: mustEnv("OFFLINE_SIGNING_KEY"),
+		KeyID:            envOr("OFFLINE_KEY_ID", "offline-2026-01"),
+		Issuer:           envOr("JWT_ISSUER", "stageops-api"), Audience: envOr("OFFLINE_AUDIENCE", "stageops-offline"),
+		TTL: 7 * 24 * time.Hour,
+	})
+	if err != nil {
+		return fmt.Errorf("configuring offline grants: %w", err)
 	}
 	requireEmailVerification := envBool("AUTH_REQUIRE_EMAIL_VERIFICATION", true)
 	var verificationMailer auth.VerificationMailer
@@ -112,12 +122,14 @@ func run() error {
 		SessionRepository:     sessionRepo, RefreshTTL: 30 * 24 * time.Hour,
 		Mailer: verificationMailer, RequireEmailVerification: requireEmailVerification,
 		EmailVerificationTTL: 24 * time.Hour,
+		DeviceRepository:     deviceRepo, OfflineSigner: offlineSigner,
 	})
 	if err := bootstrapAdminFromEnv(authService); err != nil {
 		return err
 	}
 	authHandler := auth.NewHandler(authService)
 	authenticate := auth.JWTMiddlewareWithSession(jwtConfig, authRepo, sessionRepo)
+	app.Get("/.well-known/jwks.json", authHandler.JWKS)
 
 	moduleRepo := modules.NewCouchDBRepository(modules.CouchConfig{
 		BaseURL:  couchCfg.BaseURL,
@@ -176,6 +188,9 @@ func run() error {
 	authGroup.Post("/resend-verification", loginLimiter, authHandler.ResendVerification)
 	authGroup.Get("/me", authenticate, authHandler.Me)
 	authGroup.Post("/logout-all", authenticate, authHandler.LogoutAll)
+	authGroup.Get("/devices", authenticate, authHandler.ListDevices)
+	authGroup.Post("/offline-grants", authenticate, authHandler.CreateOfflineGrant)
+	authGroup.Delete("/devices/:id", authenticate, authHandler.RevokeDevice)
 
 	usersGroup := api.Group("/users", authenticate)
 	usersGroup.Patch("/:id/role", auth.RequireRole(auth.RoleRG), authHandler.UpdateUserRole)

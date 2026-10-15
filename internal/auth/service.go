@@ -42,6 +42,10 @@ type AuthService interface {
 	LogoutAll(ctx context.Context, userID string) error
 	VerifyEmail(ctx context.Context, token string) (*TokenPair, error)
 	ResendVerification(ctx context.Context, email string) error
+	CreateOfflineGrant(ctx context.Context, userID, deviceName string) (*OfflineGrant, error)
+	ListDevices(ctx context.Context, userID string) ([]DevicePublic, error)
+	RevokeDevice(ctx context.Context, userID, deviceID string) error
+	OfflineJWKS() map[string]interface{}
 	GetUser(ctx context.Context, id string) (*UserPublic, error)
 	UpdateUserRole(ctx context.Context, targetID, newRole, authorID, authorRole string) (*UserPublic, error)
 	UpdateUserModules(ctx context.Context, targetID string, assignedModules []string, authorID, authorRole string) (*UserPublic, error)
@@ -59,6 +63,8 @@ type Service struct {
 	mailer              VerificationMailer
 	requireVerification bool
 	verificationTTL     time.Duration
+	devices             DeviceRepository
+	offlineSigner       *OfflineSigner
 }
 
 // ServiceConfig contains security-sensitive auth configuration.
@@ -71,6 +77,8 @@ type ServiceConfig struct {
 	Mailer                   VerificationMailer
 	RequireEmailVerification bool
 	EmailVerificationTTL     time.Duration
+	DeviceRepository         DeviceRepository
+	OfflineSigner            *OfflineSigner
 }
 
 // NewService creates a new Service. auditRepo may be nil to disable audit logging.
@@ -96,6 +104,7 @@ func NewServiceWithConfig(repo UserRepository, auditRepo audit.Repository, cfg S
 		sessions: cfg.SessionRepository, refreshTTL: cfg.RefreshTTL,
 		mailer: cfg.Mailer, requireVerification: cfg.RequireEmailVerification,
 		verificationTTL: cfg.EmailVerificationTTL,
+		devices:         cfg.DeviceRepository, offlineSigner: cfg.OfflineSigner,
 	}
 }
 
@@ -508,6 +517,103 @@ func newRefreshToken() (string, error) {
 func hashRefreshToken(token string) string {
 	digest := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(digest[:])
+}
+
+// CreateOfflineGrant registers a device and signs a scoped authorization snapshot.
+func (s *Service) CreateOfflineGrant(ctx context.Context, userID, deviceName string) (*OfflineGrant, error) {
+	deviceName = strings.TrimSpace(deviceName)
+	if len(deviceName) < 2 || len(deviceName) > 100 {
+		return nil, &ValidationError{
+			Message: "Nom d'appareil invalide.",
+			Fields:  map[string]string{"name": "Utilisez entre 2 et 100 caractères."},
+		}
+	}
+	if s.devices == nil || s.offlineSigner == nil {
+		return nil, fmt.Errorf("offline grants are unavailable")
+	}
+	user, err := s.repo.FindByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("finding offline user: %w", err)
+	}
+	theatreID, ok := tenant.TheatreID(ctx)
+	if !ok || user.TheatreID != theatreID {
+		return nil, ErrForbidden
+	}
+	now := time.Now().UTC()
+	device := &Device{
+		ID: "device::" + uuid.NewString(), Type: "device", UserID: user.ID,
+		TheatreID: user.TheatreID, Name: deviceName, CreatedAt: now,
+	}
+	if err := s.devices.Create(ctx, device); err != nil {
+		return nil, fmt.Errorf("registering offline device: %w", err)
+	}
+	token, expiresAt, err := s.offlineSigner.Sign(user, device.ID, now)
+	if err != nil {
+		return nil, err
+	}
+	return &OfflineGrant{
+		Token: token, ExpiresAt: expiresAt,
+		Device: DevicePublic{ID: device.ID, Name: device.Name, CreatedAt: device.CreatedAt},
+	}, nil
+}
+
+// ListDevices returns devices belonging only to the authenticated user and theatre.
+func (s *Service) ListDevices(ctx context.Context, userID string) ([]DevicePublic, error) {
+	if s.devices == nil {
+		return nil, fmt.Errorf("offline devices are unavailable")
+	}
+	theatreID, ok := tenant.TheatreID(ctx)
+	if !ok {
+		return nil, ErrForbidden
+	}
+	devices, err := s.devices.ListByUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("listing offline devices: %w", err)
+	}
+	result := make([]DevicePublic, 0, len(devices))
+	for _, device := range devices {
+		if device.UserID == userID && device.TheatreID == theatreID {
+			result = append(result, DevicePublic{
+				ID: device.ID, Name: device.Name, CreatedAt: device.CreatedAt, RevokedAt: device.RevokedAt,
+			})
+		}
+	}
+	return result, nil
+}
+
+// RevokeDevice prevents future grants for a device. Existing grants expire naturally.
+func (s *Service) RevokeDevice(ctx context.Context, userID, deviceID string) error {
+	if s.devices == nil {
+		return fmt.Errorf("offline devices are unavailable")
+	}
+	device, err := s.devices.FindByID(ctx, deviceID)
+	if err != nil {
+		if errors.Is(err, ErrDeviceNotFound) {
+			return ErrDeviceNotFound
+		}
+		return fmt.Errorf("finding offline device: %w", err)
+	}
+	theatreID, ok := tenant.TheatreID(ctx)
+	if !ok || device.UserID != userID || device.TheatreID != theatreID {
+		return ErrForbidden
+	}
+	if device.RevokedAt != nil {
+		return nil
+	}
+	now := time.Now().UTC()
+	device.RevokedAt = &now
+	if err := s.devices.Update(ctx, device); err != nil {
+		return fmt.Errorf("revoking offline device: %w", err)
+	}
+	return nil
+}
+
+// OfflineJWKS exposes only the public verification material.
+func (s *Service) OfflineJWKS() map[string]interface{} {
+	if s.offlineSigner == nil {
+		return map[string]interface{}{"keys": []interface{}{}}
+	}
+	return s.offlineSigner.JWKS()
 }
 
 func (s *Service) generateAccessToken(user *User, sessionID string) (string, error) {

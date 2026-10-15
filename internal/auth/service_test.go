@@ -28,6 +28,34 @@ type mockSessionRepo struct {
 	mock.Mock
 }
 
+type mockDeviceRepo struct {
+	mock.Mock
+}
+
+func (m *mockDeviceRepo) Create(ctx context.Context, device *Device) error {
+	return m.Called(ctx, device).Error(0)
+}
+
+func (m *mockDeviceRepo) FindByID(ctx context.Context, id string) (*Device, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*Device), args.Error(1)
+}
+
+func (m *mockDeviceRepo) ListByUser(ctx context.Context, userID string) ([]Device, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]Device), args.Error(1)
+}
+
+func (m *mockDeviceRepo) Update(ctx context.Context, device *Device) error {
+	return m.Called(ctx, device).Error(0)
+}
+
 func (m *mockSessionRepo) Create(ctx context.Context, session *Session) error {
 	return m.Called(ctx, session).Error(0)
 }
@@ -344,6 +372,46 @@ func TestRefreshRejectsReplayAndRevokesSession(t *testing.T) {
 
 	assert.ErrorIs(t, err, ErrInvalidRefresh)
 	sessions.AssertExpectations(t)
+}
+
+func TestCreateOfflineGrantScopesDeviceToAuthenticatedTheatre(t *testing.T) {
+	repo := new(mockUserRepo)
+	devices := new(mockDeviceRepo)
+	signer := newTestOfflineSigner(t)
+	svc := NewServiceWithConfig(repo, nil, ServiceConfig{
+		JWT:          JWTConfig{Secret: "test", Issuer: "test", Audience: "clients", TTL: time.Minute},
+		UserIDSecret: "secret", RegistrationTheatreID: "theatre-default",
+		DeviceRepository: devices, OfflineSigner: signer,
+	})
+	user := &User{
+		ID: "user::one", Email: "user@example.com", TheatreID: "theatre-default",
+		Role: RoleSon, AssignedModules: []string{RoleSon},
+	}
+	repo.On("FindByID", mock.Anything, user.ID).Return(user, nil)
+	devices.On("Create", mock.Anything, mock.MatchedBy(func(device *Device) bool {
+		return device.UserID == user.ID && device.TheatreID == user.TheatreID && device.Name == "Console mobile"
+	})).Return(nil)
+
+	grant, err := svc.CreateOfflineGrant(tenantContext(), user.ID, " Console mobile ")
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, grant.Token)
+	assert.Equal(t, "Console mobile", grant.Device.Name)
+	devices.AssertExpectations(t)
+}
+
+func TestRevokeDeviceRejectsAnotherUsersDevice(t *testing.T) {
+	repo := new(mockUserRepo)
+	devices := new(mockDeviceRepo)
+	svc := NewServiceWithConfig(repo, nil, ServiceConfig{DeviceRepository: devices})
+	devices.On("FindByID", mock.Anything, "device::other").Return(&Device{
+		ID: "device::other", Type: "device", UserID: "user::other", TheatreID: "theatre-default",
+	}, nil)
+
+	err := svc.RevokeDevice(tenantContext(), "user::one", "device::other")
+
+	assert.ErrorIs(t, err, ErrForbidden)
+	devices.AssertNotCalled(t, "Update")
 }
 
 func TestRegister_EmailAlreadyExists(t *testing.T) {

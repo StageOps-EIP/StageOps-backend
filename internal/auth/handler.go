@@ -130,6 +130,43 @@ func (h *Handler) ResendVerification(c *fiber.Ctx) error {
 	})
 }
 
+// JWKS exposes the public offline-grant verification key.
+func (h *Handler) JWKS(c *fiber.Ctx) error {
+	return c.Status(fiber.StatusOK).JSON(h.service.OfflineJWKS())
+}
+
+// CreateOfflineGrant handles POST /api/auth/offline-grants.
+func (h *Handler) CreateOfflineGrant(c *fiber.Ctx) error {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := parseJSONBody(c, &body); err != nil {
+		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Corps de requête invalide.")
+	}
+	grant, err := h.service.CreateOfflineGrant(c.UserContext(), localValue(c, "user_id"), body.Name)
+	if err != nil {
+		return mapServiceError(c, err)
+	}
+	return c.Status(fiber.StatusCreated).JSON(grant)
+}
+
+// ListDevices handles GET /api/auth/devices.
+func (h *Handler) ListDevices(c *fiber.Ctx) error {
+	devices, err := h.service.ListDevices(c.UserContext(), localValue(c, "user_id"))
+	if err != nil {
+		return mapServiceError(c, err)
+	}
+	return c.Status(fiber.StatusOK).JSON(devices)
+}
+
+// RevokeDevice handles DELETE /api/auth/devices/:id.
+func (h *Handler) RevokeDevice(c *fiber.Ctx) error {
+	if err := h.service.RevokeDevice(c.UserContext(), localValue(c, "user_id"), c.Params("id")); err != nil {
+		return mapServiceError(c, err)
+	}
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
 // Me handles GET /api/auth/me (protected by JWTMiddleware).
 func (h *Handler) Me(c *fiber.Ctx) error {
 	userID, ok := c.Locals("user_id").(string)
@@ -259,6 +296,8 @@ func mapServiceError(c *fiber.Ctx, err error) error {
 		return respondError(c, fiber.StatusBadRequest, "INVALID_VERIFICATION_TOKEN", "Lien de vérification invalide ou expiré.")
 	case errors.Is(err, ErrUserNotFound):
 		return respondError(c, fiber.StatusNotFound, "NOT_FOUND", "Utilisateur non trouvé.")
+	case errors.Is(err, ErrDeviceNotFound):
+		return respondError(c, fiber.StatusNotFound, "NOT_FOUND", "Appareil non trouvé.")
 	default:
 		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Une erreur interne est survenue.")
 	}

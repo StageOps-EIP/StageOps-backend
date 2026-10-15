@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 const defaultOfflineTTL = 7 * 24 * time.Hour
@@ -78,7 +79,7 @@ func (s *OfflineSigner) Sign(user *User, deviceID string, now time.Time) (string
 		TheatreID:       user.TheatreID, DeviceID: deviceID, TokenType: "offline",
 		RegisteredClaims: jwt.RegisteredClaims{
 			Audience: jwt.ClaimStrings{s.audience}, ExpiresAt: jwt.NewNumericDate(expiresAt),
-			ID: deviceID, IssuedAt: jwt.NewNumericDate(now), Issuer: s.issuer,
+			ID: uuid.NewString(), IssuedAt: jwt.NewNumericDate(now), Issuer: s.issuer,
 			NotBefore: jwt.NewNumericDate(now), Subject: user.ID,
 		},
 	}

@@ -70,6 +70,34 @@ func (m *mockAuthService) ResendVerification(ctx context.Context, email string) 
 	return m.Called(ctx, email).Error(0)
 }
 
+func (m *mockAuthService) CreateOfflineGrant(ctx context.Context, userID, deviceName string) (*OfflineGrant, error) {
+	args := m.Called(ctx, userID, deviceName)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*OfflineGrant), args.Error(1)
+}
+
+func (m *mockAuthService) ListDevices(ctx context.Context, userID string) ([]DevicePublic, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]DevicePublic), args.Error(1)
+}
+
+func (m *mockAuthService) RevokeDevice(ctx context.Context, userID, deviceID string) error {
+	return m.Called(ctx, userID, deviceID).Error(0)
+}
+
+func (m *mockAuthService) OfflineJWKS() map[string]interface{} {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return map[string]interface{}{"keys": []interface{}{}}
+	}
+	return args.Get(0).(map[string]interface{})
+}
+
 func (m *mockAuthService) GetUser(ctx context.Context, id string) (*UserPublic, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
@@ -102,6 +130,7 @@ func newTestApp(svc AuthService, jwtSecret string) *fiber.App {
 	}})
 
 	h := NewHandler(svc)
+	app.Get("/.well-known/jwks.json", h.JWKS)
 	api := app.Group("/api")
 	authGroup := api.Group("/auth")
 	authGroup.Post("/register", h.Register)
@@ -110,6 +139,9 @@ func newTestApp(svc AuthService, jwtSecret string) *fiber.App {
 	authGroup.Post("/logout", h.Logout)
 	authGroup.Post("/verify-email", h.VerifyEmail)
 	authGroup.Post("/resend-verification", h.ResendVerification)
+	authGroup.Get("/devices", JWTMiddleware(jwtSecret), h.ListDevices)
+	authGroup.Post("/offline-grants", JWTMiddleware(jwtSecret), h.CreateOfflineGrant)
+	authGroup.Delete("/devices/:id", JWTMiddleware(jwtSecret), h.RevokeDevice)
 	authGroup.Get("/me", JWTMiddleware(jwtSecret), h.Me)
 	authGroup.Post("/logout-all", JWTMiddleware(jwtSecret), h.LogoutAll)
 
@@ -363,6 +395,39 @@ func TestLogoutHandler_RevokesSession(t *testing.T) {
 	resp := postJSON(app, "/api/auth/logout", map[string]string{"refresh_token": "refresh-token"})
 
 	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
+	svc.AssertExpectations(t)
+}
+
+func TestCreateOfflineGrantHandler_Success(t *testing.T) {
+	svc := new(mockAuthService)
+	app := newTestApp(svc, "test-secret")
+	expected := &OfflineGrant{Token: "offline-token", Device: DevicePublic{ID: "device::one", Name: "Console"}}
+	svc.On("CreateOfflineGrant", mock.Anything, "user::one", "Console").Return(expected, nil)
+	token, err := generateToken("user::one", "user@example.com", RoleSon, "test-secret")
+	assert.NoError(t, err)
+	body, _ := json.Marshal(map[string]string{"name": "Console"})
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/offline-grants", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := app.Test(req)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+	svc.AssertExpectations(t)
+}
+
+func TestJWKSHandler_IsPublic(t *testing.T) {
+	svc := new(mockAuthService)
+	app := newTestApp(svc, "test-secret")
+	jwks := map[string]interface{}{"keys": []map[string]string{{"kty": "OKP"}}}
+	svc.On("OfflineJWKS").Return(jwks)
+
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/jwks.json", nil)
+	resp, err := app.Test(req)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	svc.AssertExpectations(t)
 }
 
