@@ -10,10 +10,12 @@ coverage.html
 .env
 .env.*
 !.env.example
+!.env.production.example
 CLAUDE.md
 
-# ── Dev infra (local only) ────────────────────────────────────────────────────
-docker-compose*.yml
+# ── Dev infra locale ───────────────────────────────────────────────────────────
+docker-compose.dev.yml
+docker-compose.override.yml
 scripts/
 
 # ── OS ────────────────────────────────────────────────────────────────────────
@@ -37,3 +39,4 @@ desktop.ini
 # ── Logs & divers ─────────────────────────────────────────────────────────────
 *.log
 tmp/
+backups/
