@@ -17,6 +17,7 @@ var (
 // ValidationError carries a user-facing message for input validation failures.
 type ValidationError struct {
 	Message string
+	Fields  map[string]string
 }
 
 func (e *ValidationError) Error() string {

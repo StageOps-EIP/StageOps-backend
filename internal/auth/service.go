@@ -101,18 +101,20 @@ func NewServiceWithConfig(repo UserRepository, auditRepo audit.Repository, cfg S
 
 // validateEmail returns true when email matches a practical RFC 5322 subset.
 func validateEmail(email string) bool {
-	return emailRegex.MatchString(email)
+	return len(email) <= 254 && emailRegex.MatchString(email)
 }
 
-// validatePassword enforces: min 8 chars, 1 uppercase, 1 digit, 1 special char.
+// validatePassword enforces bcrypt-safe length and four character classes.
 func validatePassword(password string) bool {
-	if len(password) < 8 {
+	if len(password) < 12 || len(password) > 72 {
 		return false
 	}
 
-	var hasUpper, hasDigit, hasSpecial bool
+	var hasLower, hasUpper, hasDigit, hasSpecial bool
 	for _, ch := range password {
 		switch {
+		case unicode.IsLower(ch):
+			hasLower = true
 		case unicode.IsUpper(ch):
 			hasUpper = true
 		case unicode.IsDigit(ch):
@@ -122,7 +124,7 @@ func validatePassword(password string) bool {
 		}
 	}
 
-	return hasUpper && hasDigit && hasSpecial
+	return hasLower && hasUpper && hasDigit && hasSpecial
 }
 
 // hashPassword hashes password with bcrypt at cost 12.
@@ -144,11 +146,12 @@ func (s *Service) Register(ctx context.Context, email, password string) (*TokenP
 	email = strings.ToLower(strings.TrimSpace(email))
 
 	if !validateEmail(email) {
-		return nil, &ValidationError{Message: "Format d'email invalide."}
+		return nil, &ValidationError{Message: "Format d'email invalide.", Fields: map[string]string{"email": "Adresse email invalide (254 caractères maximum)."}}
 	}
 	if !validatePassword(password) {
 		return nil, &ValidationError{
-			Message: "Le mot de passe doit contenir au moins 8 caractères, une majuscule, un chiffre et un caractère spécial.",
+			Message: "Le mot de passe ne respecte pas la politique de sécurité.",
+			Fields:  map[string]string{"password": "Utilisez 12 à 72 caractères avec minuscule, majuscule, chiffre et caractère spécial."},
 		}
 	}
 

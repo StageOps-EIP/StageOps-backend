@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -170,11 +171,14 @@ func TestValidatePassword(t *testing.T) {
 		valid    bool
 	}{
 		{"SecurePass1!", true},
-		{"short1!", false},         // too short
-		{"nouppercase1!", false},   // missing uppercase
-		{"NODIGITSPECIAL!", false}, // missing digit
-		{"NoSpecial1Char", false},  // missing special char
-		{"NoDigit!", false},        // missing digit
+		{"ShortPass1!", false},                   // fewer than 12 characters
+		{"short1!", false},                       // too short
+		{"nouppercase1!", false},                 // missing uppercase
+		{"NODIGITSPECIAL!", false},               // missing digit
+		{"NoSpecial1Char", false},                // missing special char
+		{"NoDigit!", false},                      // missing digit
+		{"SECUREPASSWORD1!", false},              // missing lowercase
+		{strings.Repeat("A", 70) + "a1!", false}, // exceeds bcrypt limit
 		{"", false},
 	}
 

@@ -1,7 +1,10 @@
 package auth
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -22,7 +25,7 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
-	if err := c.BodyParser(&body); err != nil {
+	if err := parseJSONBody(c, &body); err != nil {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Corps de requête invalide.")
 	}
 
@@ -43,7 +46,7 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
-	if err := c.BodyParser(&body); err != nil {
+	if err := parseJSONBody(c, &body); err != nil {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Corps de requête invalide.")
 	}
 
@@ -60,7 +63,7 @@ func (h *Handler) Refresh(c *fiber.Ctx) error {
 	var body struct {
 		RefreshToken string `json:"refresh_token"`
 	}
-	if err := c.BodyParser(&body); err != nil || body.RefreshToken == "" {
+	if err := parseJSONBody(c, &body); err != nil || body.RefreshToken == "" {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Le refresh token est requis.")
 	}
 	tokens, err := h.service.Refresh(c.UserContext(), body.RefreshToken)
@@ -75,7 +78,7 @@ func (h *Handler) Logout(c *fiber.Ctx) error {
 	var body struct {
 		RefreshToken string `json:"refresh_token"`
 	}
-	if err := c.BodyParser(&body); err != nil || body.RefreshToken == "" {
+	if err := parseJSONBody(c, &body); err != nil || body.RefreshToken == "" {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Le refresh token est requis.")
 	}
 	if err := h.service.Logout(c.UserContext(), body.RefreshToken); err != nil {
@@ -101,7 +104,7 @@ func (h *Handler) VerifyEmail(c *fiber.Ctx) error {
 	var body struct {
 		Token string `json:"token"`
 	}
-	if err := c.BodyParser(&body); err != nil || body.Token == "" {
+	if err := parseJSONBody(c, &body); err != nil || body.Token == "" {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Le token de vérification est requis.")
 	}
 	tokens, err := h.service.VerifyEmail(c.UserContext(), body.Token)
@@ -116,7 +119,7 @@ func (h *Handler) ResendVerification(c *fiber.Ctx) error {
 	var body struct {
 		Email string `json:"email"`
 	}
-	if err := c.BodyParser(&body); err != nil || body.Email == "" {
+	if err := parseJSONBody(c, &body); err != nil || body.Email == "" {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "L'adresse email est requise.")
 	}
 	if err := h.service.ResendVerification(c.UserContext(), body.Email); err != nil {
@@ -153,7 +156,7 @@ func (h *Handler) UpdateUserRole(c *fiber.Ctx) error {
 	var body struct {
 		Role string `json:"role"`
 	}
-	if err := c.BodyParser(&body); err != nil {
+	if err := parseJSONBody(c, &body); err != nil {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Corps de requête invalide.")
 	}
 
@@ -177,7 +180,7 @@ func (h *Handler) UpdateUserModules(c *fiber.Ctx) error {
 	var body struct {
 		AssignedModules *[]string `json:"assigned_modules"`
 	}
-	if err := c.BodyParser(&body); err != nil {
+	if err := parseJSONBody(c, &body); err != nil {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Corps de requête invalide.")
 	}
 	if body.AssignedModules == nil {
@@ -198,6 +201,21 @@ func localValue(c *fiber.Ctx, key string) string {
 	return value
 }
 
+func parseJSONBody(c *fiber.Ctx, destination interface{}) error {
+	if len(c.Body()) == 0 || len(c.Body()) > 16*1024 {
+		return errors.New("invalid JSON body size")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(c.Body()))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("request body must contain one JSON object")
+	}
+	return nil
+}
+
 // respondError writes the standard error JSON envelope.
 func respondError(c *fiber.Ctx, status int, code, message string) error {
 	return c.Status(status).JSON(fiber.Map{
@@ -208,12 +226,23 @@ func respondError(c *fiber.Ctx, status int, code, message string) error {
 	})
 }
 
+func respondValidationError(c *fiber.Ctx, validationError *ValidationError) error {
+	payload := fiber.Map{
+		"code":    "VALIDATION_ERROR",
+		"message": validationError.Message,
+	}
+	if len(validationError.Fields) > 0 {
+		payload["fields"] = validationError.Fields
+	}
+	return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": payload})
+}
+
 // mapServiceError translates domain errors into appropriate HTTP responses.
 func mapServiceError(c *fiber.Ctx, err error) error {
 	var validErr *ValidationError
 	switch {
 	case errors.As(err, &validErr):
-		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", validErr.Message)
+		return respondValidationError(c, validErr)
 	case errors.Is(err, ErrEmailAlreadyExists):
 		return respondError(c, fiber.StatusConflict, "EMAIL_ALREADY_EXISTS", "Un compte avec cet email existe déjà.")
 	case errors.Is(err, ErrInvalidCredentials):

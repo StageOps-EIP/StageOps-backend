@@ -207,7 +207,7 @@ func TestRegisterHandler_ValidationError(t *testing.T) {
 	app := newTestApp(svc, "test-secret")
 
 	svc.On("Register", mock.Anything, "bad-email", "weak").
-		Return("", &ValidationError{Message: "Format d'email invalide."})
+		Return("", &ValidationError{Message: "Format d'email invalide.", Fields: map[string]string{"email": "Adresse email invalide."}})
 
 	resp := postJSON(app, "/api/auth/register", map[string]string{
 		"email":    "bad-email",
@@ -218,7 +218,21 @@ func TestRegisterHandler_ValidationError(t *testing.T) {
 	errObj := decodeError(resp)
 	assert.Equal(t, "VALIDATION_ERROR", errObj["code"])
 	assert.Equal(t, "Format d'email invalide.", errObj["message"])
+	fields := errObj["fields"].(map[string]interface{})
+	assert.Equal(t, "Adresse email invalide.", fields["email"])
 	svc.AssertExpectations(t)
+}
+
+func TestRegisterHandler_RejectsUnknownJSONFields(t *testing.T) {
+	svc := new(mockAuthService)
+	app := newTestApp(svc, "test-secret")
+
+	resp := postJSON(app, "/api/auth/register", map[string]string{
+		"email": "user@example.com", "password": "SecurePass1!", "admin": "true",
+	})
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	svc.AssertNotCalled(t, "Register")
 }
 
 func TestRegisterHandler_ReturnsVerificationRequired(t *testing.T) {
