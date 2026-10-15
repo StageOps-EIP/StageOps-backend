@@ -4,18 +4,22 @@ import "time"
 
 // User is the CouchDB document stored under id "user::<uuid>".
 type User struct {
-	ID              string     `json:"_id"`
-	Rev             string     `json:"_rev,omitempty"`
-	Type            string     `json:"type"`
-	Email           string     `json:"email"`
-	TheatreID       string     `json:"theatre_id"`
-	Role            string     `json:"role"`
-	AssignedModules []string   `json:"assigned_modules"`
-	PasswordHash    string     `json:"password_hash"`
-	FailedAttempts  int        `json:"failed_attempts"`
-	LockedUntil     *time.Time `json:"locked_until,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID                        string     `json:"_id"`
+	Rev                       string     `json:"_rev,omitempty"`
+	Type                      string     `json:"type"`
+	Email                     string     `json:"email"`
+	TheatreID                 string     `json:"theatre_id"`
+	Role                      string     `json:"role"`
+	AssignedModules           []string   `json:"assigned_modules"`
+	PasswordHash              string     `json:"password_hash"`
+	EmailVerificationRequired bool       `json:"email_verification_required"`
+	EmailVerifiedAt           *time.Time `json:"email_verified_at,omitempty"`
+	VerificationTokenHash     string     `json:"verification_token_hash,omitempty"`
+	VerificationExpiresAt     *time.Time `json:"verification_expires_at,omitempty"`
+	FailedAttempts            int        `json:"failed_attempts"`
+	LockedUntil               *time.Time `json:"locked_until,omitempty"`
+	CreatedAt                 time.Time  `json:"created_at"`
+	UpdatedAt                 time.Time  `json:"updated_at"`
 }
 
 // UserPublic is returned to the client — no sensitive fields.
