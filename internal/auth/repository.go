@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -14,6 +15,7 @@ import (
 type UserRepository interface {
 	FindByEmail(ctx context.Context, email string) (*User, error)
 	FindByID(ctx context.Context, id string) (*User, error)
+	FindByRole(ctx context.Context, role string) (*User, error)
 	Create(ctx context.Context, user *User) error
 	UpdateUser(ctx context.Context, user *User) error
 }
@@ -34,10 +36,15 @@ type CouchDBRepository struct {
 
 // NewCouchDBRepository creates a ready-to-use CouchDB repository.
 func NewCouchDBRepository(cfg CouchConfig) *CouchDBRepository {
+	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
 	return &CouchDBRepository{
 		cfg:    cfg,
 		client: &http.Client{Timeout: 10 * time.Second},
 	}
+}
+
+func (r *CouchDBRepository) documentURL(id string) string {
+	return fmt.Sprintf("%s/%s/%s", r.cfg.BaseURL, url.PathEscape(r.cfg.DB), url.PathEscape(id))
 }
 
 // couchViewResponse models the JSON envelope returned by a CouchDB view.
@@ -57,7 +64,7 @@ func (r *CouchDBRepository) FindByEmail(ctx context.Context, email string) (*Use
 
 	rawURL := fmt.Sprintf(
 		"%s/%s/_design/users/_view/by_email?%s",
-		r.cfg.BaseURL, r.cfg.DB, params.Encode(),
+		r.cfg.BaseURL, url.PathEscape(r.cfg.DB), params.Encode(),
 	)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
@@ -86,13 +93,53 @@ func (r *CouchDBRepository) FindByEmail(ctx context.Context, email string) (*Use
 	}
 
 	user := viewResp.Rows[0].Doc
+	if user.Type != "user" {
+		return nil, ErrUserNotFound
+	}
+	return &user, nil
+}
+
+// FindByRole returns one user with the requested role.
+func (r *CouchDBRepository) FindByRole(ctx context.Context, role string) (*User, error) {
+	params := url.Values{}
+	params.Set("key", fmt.Sprintf("%q", role))
+	params.Set("include_docs", "true")
+	params.Set("limit", "1")
+	rawURL := fmt.Sprintf(
+		"%s/%s/_design/users/_view/by_role?%s",
+		r.cfg.BaseURL, url.PathEscape(r.cfg.DB), params.Encode(),
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building request: %w", err)
+	}
+	req.SetBasicAuth(r.cfg.Username, r.cfg.Password)
+
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("querying CouchDB: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("CouchDB returned status %d", resp.StatusCode)
+	}
+
+	var viewResp couchViewResponse
+	if err := json.NewDecoder(resp.Body).Decode(&viewResp); err != nil {
+		return nil, fmt.Errorf("decoding view response: %w", err)
+	}
+	if len(viewResp.Rows) == 0 || viewResp.Rows[0].Doc.Type != "user" {
+		return nil, ErrUserNotFound
+	}
+	user := viewResp.Rows[0].Doc
 	return &user, nil
 }
 
 // FindByID fetches a user document by its CouchDB _id.
 // Returns ErrUserNotFound on a 404 response.
 func (r *CouchDBRepository) FindByID(ctx context.Context, id string) (*User, error) {
-	rawURL := fmt.Sprintf("%s/%s/%s", r.cfg.BaseURL, r.cfg.DB, id)
+	rawURL := r.documentURL(id)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
@@ -117,6 +164,9 @@ func (r *CouchDBRepository) FindByID(ctx context.Context, id string) (*User, err
 	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
 		return nil, fmt.Errorf("decoding user document: %w", err)
 	}
+	if user.Type != "user" {
+		return nil, ErrUserNotFound
+	}
 
 	return &user, nil
 }
@@ -130,7 +180,7 @@ func (r *CouchDBRepository) UpdateUser(ctx context.Context, user *User) error {
 		return fmt.Errorf("encoding user document: %w", err)
 	}
 
-	rawURL := fmt.Sprintf("%s/%s/%s", r.cfg.BaseURL, r.cfg.DB, user.ID)
+	rawURL := r.documentURL(user.ID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, rawURL, bytes.NewReader(body))
 	if err != nil {
@@ -164,7 +214,7 @@ func (r *CouchDBRepository) Create(ctx context.Context, user *User) error {
 		return fmt.Errorf("encoding user document: %w", err)
 	}
 
-	rawURL := fmt.Sprintf("%s/%s/%s", r.cfg.BaseURL, r.cfg.DB, user.ID)
+	rawURL := r.documentURL(user.ID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, rawURL, bytes.NewReader(body))
 	if err != nil {

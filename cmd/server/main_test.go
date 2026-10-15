@@ -11,6 +11,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestEnvBool(t *testing.T) {
+	t.Setenv("FEATURE_FLAG", "false")
+	assert.False(t, envBool("FEATURE_FLAG", true))
+	t.Setenv("MISSING_FEATURE_FLAG", "")
+	assert.True(t, envBool("MISSING_FEATURE_FLAG", true))
+}
+
 func TestReadinessHandlerChecksCouchDB(t *testing.T) {
 	t.Parallel()
 

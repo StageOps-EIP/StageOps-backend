@@ -71,6 +71,9 @@ upsert_design "users" '{
   "views": {
     "by_email": {
       "map": "function(doc) { if (doc.type === \"user\" && doc.email) emit(doc.email, null); }"
+    },
+    "by_role": {
+      "map": "function(doc) { if (doc.type === \"user\" && doc.role) emit(doc.role, null); }"
     }
   }
 }'

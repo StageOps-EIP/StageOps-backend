@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -78,6 +79,9 @@ func run() error {
 	})
 	jwtSecret := mustSecret("JWT_SECRET", 32)
 	authService := auth.NewService(authRepo, auditRepo, jwtSecret)
+	if err := bootstrapAdminFromEnv(authService); err != nil {
+		return err
+	}
 	authHandler := auth.NewHandler(authService)
 	authenticate := auth.JWTMiddleware(jwtSecret, authRepo)
 
@@ -128,7 +132,9 @@ func run() error {
 	api.Get("/health/ready", ready)
 	api.Get("/health", ready)
 	authGroup := api.Group("/auth")
-	authGroup.Post("/register", registerLimiter, authHandler.Register)
+	if envBool("ALLOW_PUBLIC_REGISTRATION", true) {
+		authGroup.Post("/register", registerLimiter, authHandler.Register)
+	}
 	authGroup.Post("/login", loginLimiter, authHandler.Login)
 	authGroup.Get("/me", authenticate, authHandler.Me)
 
@@ -255,6 +261,36 @@ func mustSecret(key string, minLength int) string {
 	value := mustEnv(key)
 	if len(value) < minLength {
 		log.Fatalf("%s must contain at least %d characters", key, minLength)
+	}
+	return value
+}
+
+func bootstrapAdminFromEnv(service *auth.Service) error {
+	email := os.Getenv("BOOTSTRAP_ADMIN_EMAIL")
+	password := os.Getenv("BOOTSTRAP_ADMIN_PASSWORD")
+	if email == "" && password == "" {
+		return nil
+	}
+	if email == "" || password == "" {
+		return fmt.Errorf("BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD must be configured together")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := service.BootstrapAdmin(ctx, email, password); err != nil {
+		return fmt.Errorf("bootstrapping administrator: %w", err)
+	}
+	log.Printf("administrator bootstrap check completed")
+	return nil
+}
+
+func envBool(key string, fallback bool) bool {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		log.Fatalf("%s must be a boolean", key)
 	}
 	return value
 }

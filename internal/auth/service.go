@@ -148,6 +148,56 @@ func emailDocumentID(email, secret string) string {
 	return "user::" + hex.EncodeToString(mac.Sum(nil))
 }
 
+// BootstrapAdmin creates the first RG account when no RG exists yet.
+// Once an RG exists, the operation is idempotent and does not inspect the
+// supplied bootstrap credentials.
+func (s *Service) BootstrapAdmin(ctx context.Context, email, password string) error {
+	if _, err := s.repo.FindByRole(ctx, RoleRG); err == nil {
+		return nil
+	} else if !errors.Is(err, ErrUserNotFound) {
+		return fmt.Errorf("checking existing administrator: %w", err)
+	}
+
+	email = strings.ToLower(strings.TrimSpace(email))
+	if !validateEmail(email) {
+		return &ValidationError{Message: "Format d'email administrateur invalide."}
+	}
+	if !validatePassword(password) {
+		return &ValidationError{Message: "Le mot de passe administrateur ne respecte pas la politique de sécurité."}
+	}
+
+	if _, err := s.repo.FindByEmail(ctx, email); err == nil {
+		return ErrEmailAlreadyExists
+	} else if !errors.Is(err, ErrUserNotFound) {
+		return fmt.Errorf("checking bootstrap email: %w", err)
+	}
+
+	hash, err := hashPassword(password)
+	if err != nil {
+		return fmt.Errorf("hashing bootstrap password: %w", err)
+	}
+	now := time.Now().UTC()
+	user := &User{
+		ID:              emailDocumentID(email, s.jwtSecret),
+		Type:            "user",
+		Email:           email,
+		Role:            RoleRG,
+		AssignedModules: []string{},
+		PasswordHash:    hash,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	if err := s.repo.Create(ctx, user); err != nil {
+		if errors.Is(err, ErrEmailAlreadyExists) {
+			if _, findErr := s.repo.FindByRole(ctx, RoleRG); findErr == nil {
+				return nil
+			}
+		}
+		return fmt.Errorf("creating bootstrap administrator: %w", err)
+	}
+	return nil
+}
+
 // Login checks credentials and returns a JWT on success.
 // It always returns ErrInvalidCredentials for wrong email or password to
 // avoid revealing which field is incorrect.
