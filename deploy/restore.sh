@@ -107,5 +107,30 @@ if ! docker run --rm \
   exit 1
 fi
 
+echo "Checking restored CouchDB health..."
+if ! docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up --detach --wait couchdb; then
+  echo "Restored CouchDB is unhealthy; restoring the rollback snapshot." >&2
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" stop couchdb >/dev/null 2>&1 || true
+  docker run --rm \
+    -v stageops_couchdb_data:/data \
+    alpine:3.22 \
+    sh -c 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +'
+  if ! docker run --rm \
+    -v "$ROLLBACK_VOLUME":/source:ro \
+    -v stageops_couchdb_data:/data \
+    alpine:3.22 \
+    sh -c 'cp -a /source/. /data/'; then
+    echo "Automatic rollback failed; recovery data remains in $ROLLBACK_VOLUME." >&2
+    exit 1
+  fi
+  if ! docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up --detach --wait couchdb; then
+    echo "Rollback data was restored but CouchDB is still unhealthy." >&2
+    exit 1
+  fi
+  echo "Rollback restored successfully; the requested restore was not applied." >&2
+  exit 1
+fi
+
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" start backend
 RESTORE_SUCCEEDED=true
 echo "Restore completed from $ARCHIVE"
