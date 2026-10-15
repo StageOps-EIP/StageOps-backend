@@ -58,6 +58,18 @@ func (m *mockAuthService) LogoutAll(ctx context.Context, userID string) error {
 	return m.Called(ctx, userID).Error(0)
 }
 
+func (m *mockAuthService) VerifyEmail(ctx context.Context, token string) (*TokenPair, error) {
+	args := m.Called(ctx, token)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*TokenPair), args.Error(1)
+}
+
+func (m *mockAuthService) ResendVerification(ctx context.Context, email string) error {
+	return m.Called(ctx, email).Error(0)
+}
+
 func (m *mockAuthService) GetUser(ctx context.Context, id string) (*UserPublic, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
@@ -96,6 +108,8 @@ func newTestApp(svc AuthService, jwtSecret string) *fiber.App {
 	authGroup.Post("/login", h.Login)
 	authGroup.Post("/refresh", h.Refresh)
 	authGroup.Post("/logout", h.Logout)
+	authGroup.Post("/verify-email", h.VerifyEmail)
+	authGroup.Post("/resend-verification", h.ResendVerification)
 	authGroup.Get("/me", JWTMiddleware(jwtSecret), h.Me)
 	authGroup.Post("/logout-all", JWTMiddleware(jwtSecret), h.LogoutAll)
 
@@ -205,6 +219,21 @@ func TestRegisterHandler_ValidationError(t *testing.T) {
 	assert.Equal(t, "VALIDATION_ERROR", errObj["code"])
 	assert.Equal(t, "Format d'email invalide.", errObj["message"])
 	svc.AssertExpectations(t)
+}
+
+func TestRegisterHandler_ReturnsVerificationRequired(t *testing.T) {
+	svc := new(mockAuthService)
+	app := newTestApp(svc, "test-secret")
+	svc.On("Register", mock.Anything, "user@example.com", "SecurePass1!").Return(nil, nil)
+
+	resp := postJSON(app, "/api/auth/register", map[string]string{
+		"email": "user@example.com", "password": "SecurePass1!",
+	})
+
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+	var result map[string]string
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, "verification_required", result["status"])
 }
 
 // --- Login ---

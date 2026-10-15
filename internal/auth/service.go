@@ -28,8 +28,9 @@ const (
 	// maxFailedAttempts is the number of wrong passwords before a lockout.
 	maxFailedAttempts = 5
 	// lockoutDuration is how long the account stays locked after maxFailedAttempts.
-	lockoutDuration   = 15 * time.Minute
-	defaultRefreshTTL = 30 * 24 * time.Hour
+	lockoutDuration        = 15 * time.Minute
+	defaultRefreshTTL      = 30 * 24 * time.Hour
+	defaultVerificationTTL = 24 * time.Hour
 )
 
 // AuthService is the interface exposed to HTTP handlers.
@@ -39,6 +40,8 @@ type AuthService interface {
 	Refresh(ctx context.Context, refreshToken string) (*TokenPair, error)
 	Logout(ctx context.Context, refreshToken string) error
 	LogoutAll(ctx context.Context, userID string) error
+	VerifyEmail(ctx context.Context, token string) (*TokenPair, error)
+	ResendVerification(ctx context.Context, email string) error
 	GetUser(ctx context.Context, id string) (*UserPublic, error)
 	UpdateUserRole(ctx context.Context, targetID, newRole, authorID, authorRole string) (*UserPublic, error)
 	UpdateUserModules(ctx context.Context, targetID string, assignedModules []string, authorID, authorRole string) (*UserPublic, error)
@@ -53,15 +56,21 @@ type Service struct {
 	registrationTheatre string
 	sessions            SessionRepository
 	refreshTTL          time.Duration
+	mailer              VerificationMailer
+	requireVerification bool
+	verificationTTL     time.Duration
 }
 
 // ServiceConfig contains security-sensitive auth configuration.
 type ServiceConfig struct {
-	JWT                   JWTConfig
-	UserIDSecret          string
-	RegistrationTheatreID string
-	SessionRepository     SessionRepository
-	RefreshTTL            time.Duration
+	JWT                      JWTConfig
+	UserIDSecret             string
+	RegistrationTheatreID    string
+	SessionRepository        SessionRepository
+	RefreshTTL               time.Duration
+	Mailer                   VerificationMailer
+	RequireEmailVerification bool
+	EmailVerificationTTL     time.Duration
 }
 
 // NewService creates a new Service. auditRepo may be nil to disable audit logging.
@@ -78,10 +87,15 @@ func NewServiceWithConfig(repo UserRepository, auditRepo audit.Repository, cfg S
 	if cfg.RefreshTTL <= 0 {
 		cfg.RefreshTTL = defaultRefreshTTL
 	}
+	if cfg.EmailVerificationTTL <= 0 {
+		cfg.EmailVerificationTTL = defaultVerificationTTL
+	}
 	return &Service{
 		repo: repo, auditRepo: auditRepo, jwtConfig: cfg.JWT,
 		userIDSecret: cfg.UserIDSecret, registrationTheatre: cfg.RegistrationTheatreID,
 		sessions: cfg.SessionRepository, refreshTTL: cfg.RefreshTTL,
+		mailer: cfg.Mailer, requireVerification: cfg.RequireEmailVerification,
+		verificationTTL: cfg.EmailVerificationTTL,
 	}
 }
 
@@ -163,12 +177,32 @@ func (s *Service) Register(ctx context.Context, email, password string) (*TokenP
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
+	var verificationToken string
+	if s.requireVerification {
+		if s.mailer == nil {
+			return nil, fmt.Errorf("email verification is enabled without a mailer")
+		}
+		verificationToken, err = newRefreshToken()
+		if err != nil {
+			return nil, err
+		}
+		expiresAt := now.Add(s.verificationTTL)
+		user.EmailVerificationRequired = true
+		user.VerificationTokenHash = hashRefreshToken(verificationToken)
+		user.VerificationExpiresAt = &expiresAt
+	}
 
 	if err := s.repo.Create(ctx, user); err != nil {
 		if errors.Is(err, ErrEmailAlreadyExists) {
 			return nil, ErrEmailAlreadyExists
 		}
 		return nil, fmt.Errorf("creating user: %w", err)
+	}
+	if s.requireVerification {
+		if err := s.mailer.SendVerification(user.Email, verificationToken); err != nil {
+			return nil, fmt.Errorf("sending verification email: %w", err)
+		}
+		return nil, nil
 	}
 
 	tokens, err := s.issueTokenPair(ctx, user)
@@ -214,6 +248,7 @@ func (s *Service) BootstrapAdmin(ctx context.Context, email, password string) er
 		return fmt.Errorf("hashing bootstrap password: %w", err)
 	}
 	now := time.Now().UTC()
+	verifiedAt := now
 	user := &User{
 		ID:              emailDocumentID(email, s.userIDSecret),
 		Type:            "user",
@@ -224,6 +259,7 @@ func (s *Service) BootstrapAdmin(ctx context.Context, email, password string) er
 		PasswordHash:    hash,
 		CreatedAt:       now,
 		UpdatedAt:       now,
+		EmailVerifiedAt: &verifiedAt,
 	}
 	if err := s.repo.Create(ctx, user); err != nil {
 		if errors.Is(err, ErrEmailAlreadyExists) {
@@ -254,10 +290,12 @@ func (s *Service) Login(ctx context.Context, email, password string) (*TokenPair
 	if user.LockedUntil != nil && time.Now().UTC().Before(*user.LockedUntil) {
 		return nil, ErrAccountLocked
 	}
-
 	if !comparePassword(user.PasswordHash, password) {
 		s.recordFailedAttempt(ctx, user)
 		return nil, ErrInvalidCredentials
+	}
+	if user.EmailVerificationRequired && user.EmailVerifiedAt == nil {
+		return nil, ErrEmailNotVerified
 	}
 
 	// Successful login: clear any previous failure counter.
@@ -387,6 +425,71 @@ func (s *Service) LogoutAll(ctx context.Context, userID string) error {
 	}
 	if err := s.sessions.RevokeAllByUser(ctx, userID, time.Now().UTC()); err != nil {
 		return fmt.Errorf("revoking user sessions: %w", err)
+	}
+	return nil
+}
+
+// VerifyEmail consumes a one-time token and starts the user's first session.
+func (s *Service) VerifyEmail(ctx context.Context, token string) (*TokenPair, error) {
+	if len(token) < 32 || len(token) > 512 {
+		return nil, ErrInvalidVerification
+	}
+	hash := hashRefreshToken(token)
+	user, err := s.repo.FindByVerificationHash(ctx, hash)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return nil, ErrInvalidVerification
+		}
+		return nil, fmt.Errorf("finding email verification: %w", err)
+	}
+	now := time.Now().UTC()
+	if user.VerificationExpiresAt == nil || !now.Before(*user.VerificationExpiresAt) ||
+		!hmac.Equal([]byte(hash), []byte(user.VerificationTokenHash)) {
+		return nil, ErrInvalidVerification
+	}
+	user.EmailVerifiedAt = &now
+	user.VerificationTokenHash = ""
+	user.VerificationExpiresAt = nil
+	user.UpdatedAt = now
+	if err := s.repo.UpdateUser(ctx, user); err != nil {
+		return nil, fmt.Errorf("marking email verified: %w", err)
+	}
+	return s.issueTokenPair(ctx, user)
+}
+
+// ResendVerification replaces an expired or lost token without revealing account existence.
+func (s *Service) ResendVerification(ctx context.Context, email string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if !validateEmail(email) {
+		return &ValidationError{Message: "Format d'email invalide."}
+	}
+	if s.mailer == nil {
+		return fmt.Errorf("email verification mailer is unavailable")
+	}
+	user, err := s.repo.FindByEmail(ctx, email)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return nil
+		}
+		return fmt.Errorf("finding user for verification resend: %w", err)
+	}
+	if !user.EmailVerificationRequired || user.EmailVerifiedAt != nil {
+		return nil
+	}
+	token, err := newRefreshToken()
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	expiresAt := now.Add(s.verificationTTL)
+	user.VerificationTokenHash = hashRefreshToken(token)
+	user.VerificationExpiresAt = &expiresAt
+	user.UpdatedAt = now
+	if err := s.repo.UpdateUser(ctx, user); err != nil {
+		return fmt.Errorf("updating email verification: %w", err)
+	}
+	if err := s.mailer.SendVerification(user.Email, token); err != nil {
+		return fmt.Errorf("sending verification email: %w", err)
 	}
 	return nil
 }

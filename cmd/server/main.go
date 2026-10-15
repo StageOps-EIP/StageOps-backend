@@ -89,10 +89,29 @@ func run() error {
 		Secret: jwtSecret, Issuer: envOr("JWT_ISSUER", "stageops-api"),
 		Audience: envOr("JWT_AUDIENCE", "stageops-clients"), TTL: 15 * time.Minute,
 	}
+	requireEmailVerification := envBool("AUTH_REQUIRE_EMAIL_VERIFICATION", true)
+	var verificationMailer auth.VerificationMailer
+	if requireEmailVerification {
+		smtpPort, err := strconv.Atoi(mustEnv("SMTP_PORT"))
+		if err != nil || smtpPort <= 0 {
+			return fmt.Errorf("SMTP_PORT must be a positive integer")
+		}
+		verificationMailer, err = auth.NewSMTPMailer(auth.SMTPConfig{
+			Host: mustEnv("SMTP_HOST"), Port: smtpPort,
+			Username: os.Getenv("SMTP_USERNAME"), Password: os.Getenv("SMTP_PASSWORD"),
+			From: mustEnv("SMTP_FROM"), VerificationURL: mustEnv("AUTH_VERIFICATION_URL"),
+			ImplicitTLS: envBool("SMTP_IMPLICIT_TLS", false),
+		})
+		if err != nil {
+			return fmt.Errorf("configuring verification email: %w", err)
+		}
+	}
 	authService := auth.NewServiceWithConfig(authRepo, authAuditRepo, auth.ServiceConfig{
 		JWT: jwtConfig, UserIDSecret: mustSecret("USER_ID_SECRET", 32),
 		RegistrationTheatreID: mustEnv("DEFAULT_THEATRE_ID"),
 		SessionRepository:     sessionRepo, RefreshTTL: 30 * 24 * time.Hour,
+		Mailer: verificationMailer, RequireEmailVerification: requireEmailVerification,
+		EmailVerificationTTL: 24 * time.Hour,
 	})
 	if err := bootstrapAdminFromEnv(authService); err != nil {
 		return err
@@ -153,6 +172,8 @@ func run() error {
 	authGroup.Post("/login", loginLimiter, authHandler.Login)
 	authGroup.Post("/refresh", loginLimiter, authHandler.Refresh)
 	authGroup.Post("/logout", authHandler.Logout)
+	authGroup.Post("/verify-email", loginLimiter, authHandler.VerifyEmail)
+	authGroup.Post("/resend-verification", loginLimiter, authHandler.ResendVerification)
 	authGroup.Get("/me", authenticate, authHandler.Me)
 	authGroup.Post("/logout-all", authenticate, authHandler.LogoutAll)
 

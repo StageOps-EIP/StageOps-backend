@@ -111,6 +111,14 @@ type mockAuditRepo struct {
 	mock.Mock
 }
 
+type mockVerificationMailer struct {
+	mock.Mock
+}
+
+func (m *mockVerificationMailer) SendVerification(to, token string) error {
+	return m.Called(to, token).Error(0)
+}
+
 func (m *mockAuditRepo) Log(ctx context.Context, entry audit.AuditEntry) error {
 	args := m.Called(ctx, entry)
 	return args.Error(0)
@@ -188,6 +196,72 @@ func TestRegister_Success(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, token)
 	repo.AssertExpectations(t)
+}
+
+func TestRegisterRequiresEmailVerificationWhenEnabled(t *testing.T) {
+	repo := new(mockUserRepo)
+	mailer := new(mockVerificationMailer)
+	svc := NewServiceWithConfig(repo, nil, ServiceConfig{
+		JWT:          JWTConfig{Secret: "test-secret", Issuer: "test", Audience: "clients", TTL: 15 * time.Minute},
+		UserIDSecret: "user-id-secret", RegistrationTheatreID: "theatre-default",
+		Mailer: mailer, RequireEmailVerification: true, EmailVerificationTTL: time.Hour,
+	})
+	repo.On("FindByEmail", mock.Anything, "user@example.com").Return(nil, ErrUserNotFound)
+	repo.On("Create", mock.Anything, mock.MatchedBy(func(user *User) bool {
+		return user.EmailVerificationRequired && user.EmailVerifiedAt == nil &&
+			user.VerificationTokenHash != "" && user.VerificationExpiresAt != nil
+	})).Return(nil)
+	mailer.On("SendVerification", "user@example.com", mock.MatchedBy(func(token string) bool {
+		return len(token) >= 32 && token != hashRefreshToken(token)
+	})).Return(nil)
+
+	tokens, err := svc.Register(context.Background(), "user@example.com", "SecurePass1!")
+
+	assert.NoError(t, err)
+	assert.Nil(t, tokens)
+	repo.AssertExpectations(t)
+	mailer.AssertExpectations(t)
+}
+
+func TestVerifyEmailConsumesTokenAndCreatesSession(t *testing.T) {
+	repo := new(mockUserRepo)
+	sessions := new(mockSessionRepo)
+	svc := newSessionService(repo, sessions)
+	token := "verification-token-with-at-least-thirty-two-bytes"
+	expiresAt := time.Now().Add(time.Hour)
+	user := &User{
+		ID: "user::one", Type: "user", Email: "user@example.com", TheatreID: "theatre-default",
+		Role: RoleSon, AssignedModules: []string{RoleSon}, EmailVerificationRequired: true,
+		VerificationTokenHash: hashRefreshToken(token), VerificationExpiresAt: &expiresAt,
+	}
+	repo.On("FindByVerificationHash", mock.Anything, hashRefreshToken(token)).Return(user, nil)
+	repo.On("UpdateUser", mock.Anything, mock.MatchedBy(func(updated *User) bool {
+		return updated.EmailVerifiedAt != nil && updated.VerificationTokenHash == "" && updated.VerificationExpiresAt == nil
+	})).Return(nil)
+	sessions.On("Create", mock.Anything, mock.AnythingOfType("*auth.Session")).Return(nil)
+
+	tokens, err := svc.VerifyEmail(context.Background(), token)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, tokens.AccessToken)
+	assert.NotEmpty(t, tokens.RefreshToken)
+	repo.AssertExpectations(t)
+	sessions.AssertExpectations(t)
+}
+
+func TestLoginRejectsUnverifiedEmail(t *testing.T) {
+	repo := new(mockUserRepo)
+	svc := NewService(repo, nil, "test-secret")
+	hash, err := hashPassword("SecurePass1!")
+	assert.NoError(t, err)
+	repo.On("FindByEmail", mock.Anything, "user@example.com").Return(&User{
+		ID: "user::one", Email: "user@example.com", PasswordHash: hash,
+		EmailVerificationRequired: true,
+	}, nil)
+
+	_, err = svc.Login(context.Background(), "user@example.com", "SecurePass1!")
+
+	assert.ErrorIs(t, err, ErrEmailNotVerified)
 }
 
 func TestLoginCreatesRefreshSession(t *testing.T) {

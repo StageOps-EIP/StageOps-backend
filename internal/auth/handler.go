@@ -31,6 +31,9 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 		return mapServiceError(c, err)
 	}
 
+	if tokens == nil {
+		return c.Status(fiber.StatusCreated).JSON(fiber.Map{"status": "verification_required"})
+	}
 	return c.Status(fiber.StatusCreated).JSON(tokens)
 }
 
@@ -91,6 +94,37 @@ func (h *Handler) LogoutAll(c *fiber.Ctx) error {
 		return mapServiceError(c, err)
 	}
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// VerifyEmail handles POST /api/auth/verify-email.
+func (h *Handler) VerifyEmail(c *fiber.Ctx) error {
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := c.BodyParser(&body); err != nil || body.Token == "" {
+		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Le token de vérification est requis.")
+	}
+	tokens, err := h.service.VerifyEmail(c.UserContext(), body.Token)
+	if err != nil {
+		return mapServiceError(c, err)
+	}
+	return c.Status(fiber.StatusOK).JSON(tokens)
+}
+
+// ResendVerification handles POST /api/auth/resend-verification.
+func (h *Handler) ResendVerification(c *fiber.Ctx) error {
+	var body struct {
+		Email string `json:"email"`
+	}
+	if err := c.BodyParser(&body); err != nil || body.Email == "" {
+		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "L'adresse email est requise.")
+	}
+	if err := h.service.ResendVerification(c.UserContext(), body.Email); err != nil {
+		return mapServiceError(c, err)
+	}
+	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
+		"status": "verification_sent_if_account_exists",
+	})
 }
 
 // Me handles GET /api/auth/me (protected by JWTMiddleware).
@@ -190,6 +224,10 @@ func mapServiceError(c *fiber.Ctx, err error) error {
 		return respondError(c, fiber.StatusForbidden, "FORBIDDEN", "Accès refusé pour ce théâtre.")
 	case errors.Is(err, ErrInvalidRefresh):
 		return respondError(c, fiber.StatusUnauthorized, "INVALID_REFRESH_TOKEN", "Session invalide ou expirée.")
+	case errors.Is(err, ErrEmailNotVerified):
+		return respondError(c, fiber.StatusForbidden, "EMAIL_NOT_VERIFIED", "Confirmez votre adresse email avant de vous connecter.")
+	case errors.Is(err, ErrInvalidVerification):
+		return respondError(c, fiber.StatusBadRequest, "INVALID_VERIFICATION_TOKEN", "Lien de vérification invalide ou expiré.")
 	case errors.Is(err, ErrUserNotFound):
 		return respondError(c, fiber.StatusNotFound, "NOT_FOUND", "Utilisateur non trouvé.")
 	default:
