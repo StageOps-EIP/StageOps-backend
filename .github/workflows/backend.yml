@@ -15,7 +15,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -34,3 +34,18 @@ jobs:
 
       - name: Run static analysis
         run: go vet ./...
+
+      - name: Scan Go vulnerabilities
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          "$(go env GOPATH)/bin/govulncheck" ./...
+
+      - name: Validate deployment files
+        run: |
+          sh -n entrypoint.sh deploy/deploy.sh deploy/backup.sh deploy/restore.sh
+          docker compose --env-file .env.production.example -f docker-compose.prod.yml config --quiet
+
+      - name: Build production image
+        run: |
+          docker build --tag stageops-couchdb:ci --file deploy/couchdb/Dockerfile .
+          docker build --tag stageops-backend:ci .
