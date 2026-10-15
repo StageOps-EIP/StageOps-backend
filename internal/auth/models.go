@@ -55,3 +55,30 @@ type TokenPair struct {
 	TokenType    string `json:"token_type"`
 	ExpiresIn    int64  `json:"expires_in"`
 }
+
+// Device is an authorized installation that may receive offline grants.
+type Device struct {
+	ID        string     `json:"_id"`
+	Rev       string     `json:"_rev,omitempty"`
+	Type      string     `json:"type"`
+	UserID    string     `json:"user_id"`
+	TheatreID string     `json:"theatre_id"`
+	Name      string     `json:"name"`
+	CreatedAt time.Time  `json:"created_at"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+}
+
+// DevicePublic is safe to return to authenticated clients.
+type DevicePublic struct {
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	CreatedAt time.Time  `json:"created_at"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+}
+
+// OfflineGrant contains a signed authorization snapshot for local use.
+type OfflineGrant struct {
+	Token     string       `json:"token"`
+	Device    DevicePublic `json:"device"`
+	ExpiresAt time.Time    `json:"expires_at"`
+}

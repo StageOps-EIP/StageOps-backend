@@ -12,6 +12,7 @@ var (
 	ErrInvalidRefresh      = errors.New("invalid refresh token")
 	ErrEmailNotVerified    = errors.New("email not verified")
 	ErrInvalidVerification = errors.New("invalid email verification token")
+	ErrDeviceNotFound      = errors.New("device not found")
 )
 
 // ValidationError carries a user-facing message for input validation failures.

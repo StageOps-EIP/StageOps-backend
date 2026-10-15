@@ -101,6 +101,15 @@ upsert_design "$AUTH_DB" "sessions" '{
   }
 }'
 
+upsert_design "$AUTH_DB" "devices" '{
+  "_id": "_design/devices",
+  "views": {
+    "by_user": {
+      "map": "function(doc) { if (doc.type === \"device\" && doc.user_id) emit(doc.user_id, null); }"
+    }
+  }
+}'
+
 upsert_design "$DATA_DB" "equipment" '{
   "_id": "_design/equipment",
   "views": {
