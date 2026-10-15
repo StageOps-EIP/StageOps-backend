@@ -1,31 +1,37 @@
+# syntax=docker/dockerfile:1
+
 # ── Build stage ──────────────────────────────────────────────────────────────
-FROM golang:1.21-alpine AS builder
-ARG STAGEOPS_NET_BRIDGE
+FROM golang:1.27.2-alpine AS builder
 WORKDIR /app
 
 COPY go.mod go.sum ./
-RUN export HTTP_PROXY="$STAGEOPS_NET_BRIDGE" HTTPS_PROXY="$STAGEOPS_NET_BRIDGE" \
-      http_proxy="$STAGEOPS_NET_BRIDGE" https_proxy="$STAGEOPS_NET_BRIDGE"; \
-    for attempt in 1 2 3 4 5; do \
-      go mod download && break; \
-      if [ "$attempt" -eq 5 ]; then exit 1; fi; \
-      sleep 3; \
-    done
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o server ./cmd/server/
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build \
+      -trimpath \
+      -ldflags="-s -w" \
+      -o /out/server ./cmd/server/
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
-FROM alpine:3.19
-ARG STAGEOPS_NET_BRIDGE
-RUN HTTP_PROXY="$STAGEOPS_NET_BRIDGE" HTTPS_PROXY="$STAGEOPS_NET_BRIDGE" \
-    http_proxy="$STAGEOPS_NET_BRIDGE" https_proxy="$STAGEOPS_NET_BRIDGE" \
-    apk --no-cache add ca-certificates tzdata curl
+FROM alpine:3.22
+
+RUN apk --no-cache add ca-certificates curl jq tzdata \
+    && addgroup -S stageops \
+    && adduser -S -G stageops -H -h /app stageops
 WORKDIR /app
 
-COPY --from=builder /app/server .
-COPY entrypoint.sh .
-RUN chmod +x entrypoint.sh
+COPY --from=builder --chown=stageops:stageops /out/server ./server
+COPY --chown=stageops:stageops entrypoint.sh ./entrypoint.sh
+RUN chmod 0555 ./server ./entrypoint.sh
 
 EXPOSE 3000
+
+USER stageops
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
+  CMD curl --fail --silent http://127.0.0.1:3000/api/health/ready >/dev/null || exit 1
+
 ENTRYPOINT ["./entrypoint.sh"]

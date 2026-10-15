@@ -1,0 +1,25 @@
+{
+	admin off
+}
+
+{$API_DOMAIN} {
+	encode zstd gzip
+	tls {
+		protocols tls1.3
+	}
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+	}
+
+	reverse_proxy backend:3000
+
+	log {
+		output stdout
+		format json
+	}
+}

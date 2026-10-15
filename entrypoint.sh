@@ -1,53 +1,85 @@
 #!/bin/sh
-set -e
+set -eu
 
-COUCH="${COUCHDB_URL}"
-DB="${COUCHDB_DB}"
+: "${COUCHDB_URL:?COUCHDB_URL is required}"
+: "${COUCHDB_DB:?COUCHDB_DB is required}"
+: "${COUCHDB_USER:?COUCHDB_USER is required}"
+: "${COUCHDB_PASSWORD:?COUCHDB_PASSWORD is required}"
+
+COUCH=${COUCHDB_URL%/}
+DB=$COUCHDB_DB
 AUTH="${COUCHDB_USER}:${COUCHDB_PASSWORD}"
+MAX_ATTEMPTS=${COUCHDB_STARTUP_ATTEMPTS:-60}
 
-echo "⏳ Attente de CouchDB..."
-until curl -sf -u "${AUTH}" "${COUCH}/_up" > /dev/null 2>&1; do
+attempt=1
+echo "Waiting for CouchDB..."
+until curl --fail --silent --user "$AUTH" "$COUCH/_up" >/dev/null 2>&1; do
+  if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
+    echo "CouchDB did not become ready after $MAX_ATTEMPTS attempts." >&2
+    exit 1
+  fi
+  attempt=$((attempt + 1))
   sleep 2
 done
-echo "✅ CouchDB est prêt."
 
-# Créer la base de données si elle n'existe pas
-HTTP=$(curl -s -o /dev/null -w "%{http_code}" -u "${AUTH}" "${COUCH}/${DB}")
-if [ "$HTTP" = "404" ]; then
-  echo "📦 Création de la base '${DB}'..."
-  curl -sf -X PUT -u "${AUTH}" "${COUCH}/${DB}"
-  echo "✅ Base '${DB}' créée."
-else
-  echo "✅ Base '${DB}' existe déjà."
-fi
+db_status=$(curl --silent --output /dev/null --write-out '%{http_code}' --user "$AUTH" "$COUCH/$DB")
+case "$db_status" in
+  200)
+    ;;
+  404)
+    curl --fail --silent --show-error --request PUT --user "$AUTH" "$COUCH/$DB" >/dev/null
+    ;;
+  *)
+    echo "Unable to inspect CouchDB database: HTTP $db_status" >&2
+    exit 1
+    ;;
+esac
 
-# Fonction pour créer un design document si absent
-create_design() {
-  DESIGN=$1
-  BODY=$2
-  HTTP=$(curl -s -o /dev/null -w "%{http_code}" -u "${AUTH}" "${COUCH}/${DB}/_design/${DESIGN}")
-  if [ "$HTTP" = "404" ]; then
-    echo "🔍 Création de _design/${DESIGN}..."
-    curl -sf -X PUT -u "${AUTH}" "${COUCH}/${DB}/_design/${DESIGN}" \
-      -H "Content-Type: application/json" \
-      -d "${BODY}"
-    echo "✅ _design/${DESIGN} créé."
-  else
-    echo "✅ _design/${DESIGN} existe déjà."
-  fi
+upsert_design() {
+  design=$1
+  desired=$2
+  url="$COUCH/$DB/_design/$design"
+  response=$(curl --silent --show-error --user "$AUTH" --write-out '\n%{http_code}' "$url")
+  status=$(printf '%s\n' "$response" | tail -n 1)
+  current=$(printf '%s\n' "$response" | sed '$d')
+
+  case "$status" in
+    200)
+      current_without_rev=$(printf '%s' "$current" | jq -cS 'del(._rev)')
+      normalized_desired=$(printf '%s' "$desired" | jq -cS .)
+      if [ "$current_without_rev" = "$normalized_desired" ]; then
+        return
+      fi
+      rev=$(printf '%s' "$current" | jq -r '._rev')
+      payload=$(printf '%s' "$desired" | jq -c --arg rev "$rev" '. + {_rev: $rev}')
+      ;;
+    404)
+      payload=$desired
+      ;;
+    *)
+      echo "Unable to inspect design document $design: HTTP $status" >&2
+      exit 1
+      ;;
+  esac
+
+  curl --fail --silent --show-error --request PUT --user "$AUTH" \
+    --header "Content-Type: application/json" --data "$payload" "$url" >/dev/null
 }
 
-# Vue by_email pour l'auth
-create_design "users" '{
+upsert_design "users" '{
+  "_id": "_design/users",
   "views": {
     "by_email": {
       "map": "function(doc) { if (doc.type === \"user\" && doc.email) emit(doc.email, null); }"
+    },
+    "by_role": {
+      "map": "function(doc) { if (doc.type === \"user\" && doc.role) emit(doc.role, null); }"
     }
   }
 }'
 
-# Vue all pour l'équipement
-create_design "equipment" '{
+upsert_design "equipment" '{
+  "_id": "_design/equipment",
   "views": {
     "all": {
       "map": "function(doc) { if (doc.type === \"equipment\") emit(doc._id, null); }"
@@ -55,8 +87,8 @@ create_design "equipment" '{
   }
 }'
 
-# Vue all pour les événements
-create_design "events" '{
+upsert_design "events" '{
+  "_id": "_design/events",
   "views": {
     "all": {
       "map": "function(doc) { if (doc.type === \"event\") emit(doc._id, null); }"
@@ -64,8 +96,8 @@ create_design "events" '{
   }
 }'
 
-# Vue all pour les incidents
-create_design "incidents" '{
+upsert_design "incidents" '{
+  "_id": "_design/incidents",
   "views": {
     "all": {
       "map": "function(doc) { if (doc.type === \"incident\") emit(doc._id, null); }"
@@ -73,8 +105,8 @@ create_design "incidents" '{
   }
 }'
 
-# Vue all pour l'équipe
-create_design "team" '{
+upsert_design "team" '{
+  "_id": "_design/team",
   "views": {
     "all": {
       "map": "function(doc) { if (doc.type === \"member\") emit(doc._id, null); }"
@@ -82,8 +114,8 @@ create_design "team" '{
   }
 }'
 
-# Vue all pour les projets
-create_design "projects" '{
+upsert_design "projects" '{
+  "_id": "_design/projects",
   "views": {
     "all": {
       "map": "function(doc) { if (doc.type === \"project\") emit(doc._id, null); }"
@@ -91,5 +123,5 @@ create_design "projects" '{
   }
 }'
 
-echo "🚀 Démarrage du serveur..."
+echo "CouchDB is ready; starting StageOps backend."
 exec ./server

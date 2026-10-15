@@ -34,6 +34,14 @@ func (m *mockUserRepo) FindByID(ctx context.Context, id string) (*User, error) {
 	return args.Get(0).(*User), args.Error(1)
 }
 
+func (m *mockUserRepo) FindByRole(ctx context.Context, role string) (*User, error) {
+	args := m.Called(ctx, role)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*User), args.Error(1)
+}
+
 func (m *mockUserRepo) Create(ctx context.Context, user *User) error {
 	args := m.Called(ctx, user)
 	return args.Error(0)
@@ -143,6 +151,40 @@ func TestRegister_EmailAlreadyExists(t *testing.T) {
 
 	_, err := svc.Register(context.Background(), "user@example.com", "SecurePass1!")
 	assert.ErrorIs(t, err, ErrEmailAlreadyExists)
+	repo.AssertExpectations(t)
+}
+
+func TestEmailDocumentIDIsStableAndDoesNotExposeEmail(t *testing.T) {
+	first := emailDocumentID("user@example.com", "secret-one")
+	second := emailDocumentID("user@example.com", "secret-one")
+	withAnotherSecret := emailDocumentID("user@example.com", "secret-two")
+
+	assert.Equal(t, first, second)
+	assert.NotContains(t, first, "user@example.com")
+	assert.NotEqual(t, first, withAnotherSecret)
+}
+
+func TestBootstrapAdminCreatesFirstRG(t *testing.T) {
+	repo := new(mockUserRepo)
+	svc := NewService(repo, nil, "test-secret")
+	repo.On("FindByRole", mock.Anything, RoleRG).Return(nil, ErrUserNotFound)
+	repo.On("FindByEmail", mock.Anything, "admin@example.com").Return(nil, ErrUserNotFound)
+	repo.On("Create", mock.Anything, mock.MatchedBy(func(user *User) bool {
+		return user.Email == "admin@example.com" && user.Role == RoleRG && comparePassword(user.PasswordHash, "SecureAdmin1!")
+	})).Return(nil)
+
+	err := svc.BootstrapAdmin(context.Background(), "ADMIN@example.com", "SecureAdmin1!")
+	assert.NoError(t, err)
+	repo.AssertExpectations(t)
+}
+
+func TestBootstrapAdminIsIdempotentWhenRGExists(t *testing.T) {
+	repo := new(mockUserRepo)
+	svc := NewService(repo, nil, "test-secret")
+	repo.On("FindByRole", mock.Anything, RoleRG).Return(&User{Type: "user", Role: RoleRG}, nil)
+
+	err := svc.BootstrapAdmin(context.Background(), "", "")
+	assert.NoError(t, err)
 	repo.AssertExpectations(t)
 }
 

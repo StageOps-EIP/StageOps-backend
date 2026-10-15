@@ -30,14 +30,11 @@ func (r *Repository) List(ctx context.Context) ([]Member, error) {
 }
 
 func (r *Repository) FindByID(ctx context.Context, id string) (*Member, error) {
-	var d doc
-	if err := r.db.GetDoc(ctx, id, &d); err != nil {
-		if errors.Is(err, couch.ErrNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("fetching member %s: %w", id, err)
+	d, err := r.findDocByID(ctx, id)
+	if err != nil {
+		return nil, err
 	}
-	return toPublic(&d), nil
+	return toPublic(d), nil
 }
 
 func (r *Repository) Create(ctx context.Context, input *Input) (*Member, error) {
@@ -68,12 +65,9 @@ func (r *Repository) Update(ctx context.Context, id string, input *Input) (*Memb
 		return nil, err
 	}
 
-	var current doc
-	if err := r.db.GetDoc(ctx, id, &current); err != nil {
-		if errors.Is(err, couch.ErrNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("fetching member for update: %w", err)
+	current, err := r.findDocByID(ctx, id)
+	if err != nil {
+		return nil, err
 	}
 
 	current.Name = input.Name
@@ -83,19 +77,16 @@ func (r *Repository) Update(ctx context.Context, id string, input *Input) (*Memb
 	current.Phone = input.Phone
 	current.Permissions = nilToEmpty(input.Permissions)
 
-	if err := r.db.PutDoc(ctx, id, &current); err != nil {
+	if err := r.db.PutDoc(ctx, id, current); err != nil {
 		return nil, fmt.Errorf("updating member: %w", err)
 	}
-	return toPublic(&current), nil
+	return toPublic(current), nil
 }
 
 func (r *Repository) Delete(ctx context.Context, id string) error {
-	var current doc
-	if err := r.db.GetDoc(ctx, id, &current); err != nil {
-		if errors.Is(err, couch.ErrNotFound) {
-			return ErrNotFound
-		}
-		return fmt.Errorf("fetching member for delete: %w", err)
+	current, err := r.findDocByID(ctx, id)
+	if err != nil {
+		return err
 	}
 
 	if err := r.db.DeleteDoc(ctx, id, current.Rev); err != nil {
@@ -105,6 +96,20 @@ func (r *Repository) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("deleting member: %w", err)
 	}
 	return nil
+}
+
+func (r *Repository) findDocByID(ctx context.Context, id string) (*doc, error) {
+	var current doc
+	if err := r.db.GetDoc(ctx, id, &current); err != nil {
+		if errors.Is(err, couch.ErrNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("fetching member %s: %w", id, err)
+	}
+	if current.Type != docType {
+		return nil, ErrNotFound
+	}
+	return &current, nil
 }
 
 func validateInput(input *Input) error {

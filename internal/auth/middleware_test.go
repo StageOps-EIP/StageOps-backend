@@ -18,6 +18,15 @@ type projectModuleCheckerMock struct {
 	err    error
 }
 
+type userAccessReaderStub struct {
+	user *User
+	err  error
+}
+
+func (s userAccessReaderStub) FindByID(context.Context, string) (*User, error) {
+	return s.user, s.err
+}
+
 func (m projectModuleCheckerMock) IsModuleActive(context.Context, string, string) (bool, error) {
 	return m.active, m.err
 }
@@ -145,6 +154,30 @@ func TestJWTMiddleware_WrongScheme(t *testing.T) {
 
 	resp, _ := app.Test(req)
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestJWTMiddlewareUsesCurrentServerSideRole(t *testing.T) {
+	secret := "test-secret"
+	token, err := generateToken("user::abc", "user@example.com", RoleRG, secret)
+	assert.NoError(t, err)
+
+	app := fiber.New()
+	app.Get("/admin",
+		JWTMiddleware(secret, userAccessReaderStub{user: &User{
+			ID:              "user::abc",
+			Email:           "user@example.com",
+			Role:            RoleSon,
+			AssignedModules: []string{RoleSon},
+		}}),
+		RequireRole(RoleRG),
+		func(c *fiber.Ctx) error { return c.SendStatus(http.StatusOK) },
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	response, err := app.Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusForbidden, response.StatusCode)
 }
 
 // --- RequireRole ---

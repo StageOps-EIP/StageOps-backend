@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -18,9 +19,14 @@ type ProjectModuleChecker interface {
 	IsModuleActive(ctx context.Context, projectID, moduleName string) (bool, error)
 }
 
+// UserAccessReader retrieves the current server-side authorization state.
+type UserAccessReader interface {
+	FindByID(ctx context.Context, id string) (*User, error)
+}
+
 // JWTMiddleware validates the Bearer token from the Authorization header.
 // On success it sets "user_id", "email", and "role" in fiber.Ctx locals.
-func JWTMiddleware(secret string) fiber.Handler {
+func JWTMiddleware(secret string, accessReaders ...UserAccessReader) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		header := c.Get("Authorization")
 		if header == "" {
@@ -36,11 +42,31 @@ func JWTMiddleware(secret string) fiber.Handler {
 		if err != nil {
 			return respondError(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Token invalide ou expiré.")
 		}
+		if claims.UserID == "" {
+			return respondError(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Token invalide ou expiré.")
+		}
+
+		email := claims.Email
+		role := claims.Role
+		assignedModules := claims.AssignedModules
+
+		if len(accessReaders) > 0 && accessReaders[0] != nil {
+			user, findErr := accessReaders[0].FindByID(c.Context(), claims.UserID)
+			if errors.Is(findErr, ErrUserNotFound) {
+				return respondError(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Utilisateur invalide.")
+			}
+			if findErr != nil {
+				return respondError(c, fiber.StatusServiceUnavailable, "AUTH_UNAVAILABLE", "Vérification des autorisations indisponible.")
+			}
+			email = user.Email
+			role = user.Role
+			assignedModules = user.AssignedModules
+		}
 
 		c.Locals("user_id", claims.UserID)
-		c.Locals("email", claims.Email)
-		c.Locals("role", claims.Role)
-		c.Locals("assigned_modules", claims.AssignedModules)
+		c.Locals("email", email)
+		c.Locals("role", role)
+		c.Locals("assigned_modules", assignedModules)
 
 		return c.Next()
 	}
