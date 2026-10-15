@@ -23,6 +23,46 @@ type mockUserRepo struct {
 	mock.Mock
 }
 
+type mockSessionRepo struct {
+	mock.Mock
+}
+
+func (m *mockSessionRepo) Create(ctx context.Context, session *Session) error {
+	return m.Called(ctx, session).Error(0)
+}
+
+func (m *mockSessionRepo) FindByID(ctx context.Context, id string) (*Session, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*Session), args.Error(1)
+}
+
+func (m *mockSessionRepo) FindByRefreshHash(ctx context.Context, hash string) (*Session, error) {
+	args := m.Called(ctx, hash)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*Session), args.Error(1)
+}
+
+func (m *mockSessionRepo) Update(ctx context.Context, session *Session) error {
+	return m.Called(ctx, session).Error(0)
+}
+
+func (m *mockSessionRepo) RevokeAllByUser(ctx context.Context, userID string, revokedAt time.Time) error {
+	return m.Called(ctx, userID, revokedAt).Error(0)
+}
+
+func newSessionService(repo UserRepository, sessions SessionRepository) *Service {
+	return NewServiceWithConfig(repo, nil, ServiceConfig{
+		JWT:          JWTConfig{Secret: "test-secret", Issuer: "test", Audience: "clients", TTL: 15 * time.Minute},
+		UserIDSecret: "user-id-secret", RegistrationTheatreID: "theatre-default",
+		SessionRepository: sessions, RefreshTTL: 30 * 24 * time.Hour,
+	})
+}
+
 func (m *mockUserRepo) FindByEmail(ctx context.Context, email string) (*User, error) {
 	args := m.Called(ctx, email)
 	if args.Get(0) == nil {
@@ -140,6 +180,84 @@ func TestRegister_Success(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, token)
 	repo.AssertExpectations(t)
+}
+
+func TestLoginCreatesRefreshSession(t *testing.T) {
+	repo := new(mockUserRepo)
+	sessions := new(mockSessionRepo)
+	svc := newSessionService(repo, sessions)
+	hash, err := hashPassword("SecurePass1!")
+	assert.NoError(t, err)
+	user := &User{
+		ID: "user::one", Type: "user", Email: "user@example.com", TheatreID: "theatre-default",
+		Role: RoleSon, AssignedModules: []string{RoleSon}, PasswordHash: hash,
+	}
+	repo.On("FindByEmail", mock.Anything, user.Email).Return(user, nil)
+	sessions.On("Create", mock.Anything, mock.MatchedBy(func(session *Session) bool {
+		return session.Type == "session" && session.UserID == user.ID &&
+			session.TheatreID == user.TheatreID && session.RefreshTokenHash != "" &&
+			session.ExpiresAt.After(session.CreatedAt)
+	})).Return(nil)
+
+	tokens, err := svc.Login(context.Background(), user.Email, "SecurePass1!")
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, tokens.AccessToken)
+	assert.NotEmpty(t, tokens.RefreshToken)
+	assert.Equal(t, int64(900), tokens.ExpiresIn)
+	repo.AssertExpectations(t)
+	sessions.AssertExpectations(t)
+}
+
+func TestRefreshRotatesToken(t *testing.T) {
+	repo := new(mockUserRepo)
+	sessions := new(mockSessionRepo)
+	svc := newSessionService(repo, sessions)
+	refreshToken := "refresh-token-with-at-least-thirty-two-bytes"
+	session := &Session{
+		ID: "session::one", Rev: "1-a", Type: "session", UserID: "user::one",
+		TheatreID: "theatre-default", RefreshTokenHash: hashRefreshToken(refreshToken),
+		ExpiresAt: time.Now().Add(time.Hour),
+	}
+	user := &User{
+		ID: session.UserID, Type: "user", Email: "user@example.com", TheatreID: session.TheatreID,
+		Role: RoleSon, AssignedModules: []string{RoleSon},
+	}
+	sessions.On("FindByRefreshHash", mock.Anything, session.RefreshTokenHash).Return(session, nil)
+	repo.On("FindByID", mock.Anything, user.ID).Return(user, nil)
+	sessions.On("Update", mock.Anything, mock.MatchedBy(func(updated *Session) bool {
+		return updated.PreviousRefreshHash == hashRefreshToken(refreshToken) &&
+			updated.RefreshTokenHash != updated.PreviousRefreshHash
+	})).Return(nil)
+
+	tokens, err := svc.Refresh(context.Background(), refreshToken)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, tokens.AccessToken)
+	assert.NotEqual(t, refreshToken, tokens.RefreshToken)
+	repo.AssertExpectations(t)
+	sessions.AssertExpectations(t)
+}
+
+func TestRefreshRejectsReplayAndRevokesSession(t *testing.T) {
+	repo := new(mockUserRepo)
+	sessions := new(mockSessionRepo)
+	svc := newSessionService(repo, sessions)
+	replayed := "replayed-refresh-token-with-thirty-two-bytes"
+	session := &Session{
+		ID: "session::one", Type: "session", UserID: "user::one", TheatreID: "theatre-default",
+		RefreshTokenHash: "current-hash", PreviousRefreshHash: hashRefreshToken(replayed),
+		ExpiresAt: time.Now().Add(time.Hour),
+	}
+	sessions.On("FindByRefreshHash", mock.Anything, hashRefreshToken(replayed)).Return(session, nil)
+	sessions.On("Update", mock.Anything, mock.MatchedBy(func(updated *Session) bool {
+		return updated.RevokedAt != nil
+	})).Return(nil)
+
+	_, err := svc.Refresh(context.Background(), replayed)
+
+	assert.ErrorIs(t, err, ErrInvalidRefresh)
+	sessions.AssertExpectations(t)
 }
 
 func TestRegister_EmailAlreadyExists(t *testing.T) {

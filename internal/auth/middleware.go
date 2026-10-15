@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stageops/backend/internal/tenant"
@@ -33,6 +34,19 @@ func JWTMiddleware(secret string, accessReaders ...UserAccessReader) fiber.Handl
 
 // JWTMiddlewareWithConfig validates access tokens against issuer and audience.
 func JWTMiddlewareWithConfig(cfg JWTConfig, accessReaders ...UserAccessReader) fiber.Handler {
+	var userReader UserAccessReader
+	if len(accessReaders) > 0 {
+		userReader = accessReaders[0]
+	}
+	return jwtMiddleware(cfg, userReader, nil)
+}
+
+// JWTMiddlewareWithSession also enforces server-side session revocation.
+func JWTMiddlewareWithSession(cfg JWTConfig, userReader UserAccessReader, sessionReader SessionRepository) fiber.Handler {
+	return jwtMiddleware(cfg, userReader, sessionReader)
+}
+
+func jwtMiddleware(cfg JWTConfig, userReader UserAccessReader, sessionReader SessionRepository) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		header := c.Get("Authorization")
 		if header == "" {
@@ -57,8 +71,16 @@ func JWTMiddlewareWithConfig(cfg JWTConfig, accessReaders ...UserAccessReader) f
 		assignedModules := claims.AssignedModules
 		theatreID := claims.TheatreID
 
-		if len(accessReaders) > 0 && accessReaders[0] != nil {
-			user, findErr := accessReaders[0].FindByID(c.Context(), claims.UserID)
+		if sessionReader != nil {
+			session, findErr := sessionReader.FindByID(c.UserContext(), claims.ID)
+			if findErr != nil || session.RevokedAt != nil || !time.Now().UTC().Before(session.ExpiresAt) ||
+				session.UserID != claims.UserID || session.TheatreID != claims.TheatreID {
+				return respondError(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Session invalide ou révoquée.")
+			}
+		}
+
+		if userReader != nil {
+			user, findErr := userReader.FindByID(c.UserContext(), claims.UserID)
 			if errors.Is(findErr, ErrUserNotFound) {
 				return respondError(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Utilisateur invalide.")
 			}

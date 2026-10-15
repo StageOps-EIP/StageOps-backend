@@ -26,12 +26,12 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Corps de requête invalide.")
 	}
 
-	token, err := h.service.Register(c.UserContext(), body.Email, body.Password)
+	tokens, err := h.service.Register(c.UserContext(), body.Email, body.Password)
 	if err != nil {
 		return mapServiceError(c, err)
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"token": token})
+	return c.Status(fiber.StatusCreated).JSON(tokens)
 }
 
 // Login handles POST /api/auth/login.
@@ -44,12 +44,53 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Corps de requête invalide.")
 	}
 
-	token, err := h.service.Login(c.UserContext(), body.Email, body.Password)
+	tokens, err := h.service.Login(c.UserContext(), body.Email, body.Password)
 	if err != nil {
 		return mapServiceError(c, err)
 	}
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"token": token})
+	return c.Status(fiber.StatusOK).JSON(tokens)
+}
+
+// Refresh handles POST /api/auth/refresh and rotates the supplied refresh token.
+func (h *Handler) Refresh(c *fiber.Ctx) error {
+	var body struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := c.BodyParser(&body); err != nil || body.RefreshToken == "" {
+		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Le refresh token est requis.")
+	}
+	tokens, err := h.service.Refresh(c.UserContext(), body.RefreshToken)
+	if err != nil {
+		return mapServiceError(c, err)
+	}
+	return c.Status(fiber.StatusOK).JSON(tokens)
+}
+
+// Logout handles POST /api/auth/logout and revokes one refresh-token family.
+func (h *Handler) Logout(c *fiber.Ctx) error {
+	var body struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := c.BodyParser(&body); err != nil || body.RefreshToken == "" {
+		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Le refresh token est requis.")
+	}
+	if err := h.service.Logout(c.UserContext(), body.RefreshToken); err != nil {
+		return mapServiceError(c, err)
+	}
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// LogoutAll handles POST /api/auth/logout-all for the authenticated user.
+func (h *Handler) LogoutAll(c *fiber.Ctx) error {
+	userID := localValue(c, "user_id")
+	if userID == "" {
+		return respondError(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Authentification requise.")
+	}
+	if err := h.service.LogoutAll(c.UserContext(), userID); err != nil {
+		return mapServiceError(c, err)
+	}
+	return c.SendStatus(fiber.StatusNoContent)
 }
 
 // Me handles GET /api/auth/me (protected by JWTMiddleware).
@@ -147,6 +188,8 @@ func mapServiceError(c *fiber.Ctx, err error) error {
 		return respondError(c, fiber.StatusTooManyRequests, "ACCOUNT_LOCKED", "Compte temporairement bloqué suite à plusieurs tentatives échouées. Réessayez dans 15 minutes.")
 	case errors.Is(err, ErrForbidden):
 		return respondError(c, fiber.StatusForbidden, "FORBIDDEN", "Accès refusé pour ce théâtre.")
+	case errors.Is(err, ErrInvalidRefresh):
+		return respondError(c, fiber.StatusUnauthorized, "INVALID_REFRESH_TOKEN", "Session invalide ou expirée.")
 	case errors.Is(err, ErrUserNotFound):
 		return respondError(c, fiber.StatusNotFound, "NOT_FOUND", "Utilisateur non trouvé.")
 	default:

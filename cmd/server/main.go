@@ -71,6 +71,7 @@ func run() error {
 	}
 
 	authRepo := auth.NewCouchDBRepository(couchCfg)
+	sessionRepo := auth.NewCouchDBSessionRepository(couchCfg)
 	authAuditRepo := audit.NewCouchDBRepository(audit.CouchConfig{
 		BaseURL:  couchCfg.BaseURL,
 		DB:       couchCfg.DB,
@@ -91,12 +92,13 @@ func run() error {
 	authService := auth.NewServiceWithConfig(authRepo, authAuditRepo, auth.ServiceConfig{
 		JWT: jwtConfig, UserIDSecret: mustSecret("USER_ID_SECRET", 32),
 		RegistrationTheatreID: mustEnv("DEFAULT_THEATRE_ID"),
+		SessionRepository:     sessionRepo, RefreshTTL: 30 * 24 * time.Hour,
 	})
 	if err := bootstrapAdminFromEnv(authService); err != nil {
 		return err
 	}
 	authHandler := auth.NewHandler(authService)
-	authenticate := auth.JWTMiddlewareWithConfig(jwtConfig, authRepo)
+	authenticate := auth.JWTMiddlewareWithSession(jwtConfig, authRepo, sessionRepo)
 
 	moduleRepo := modules.NewCouchDBRepository(modules.CouchConfig{
 		BaseURL:  couchCfg.BaseURL,
@@ -149,7 +151,10 @@ func run() error {
 		authGroup.Post("/register", registerLimiter, authHandler.Register)
 	}
 	authGroup.Post("/login", loginLimiter, authHandler.Login)
+	authGroup.Post("/refresh", loginLimiter, authHandler.Refresh)
+	authGroup.Post("/logout", authHandler.Logout)
 	authGroup.Get("/me", authenticate, authHandler.Me)
+	authGroup.Post("/logout-all", authenticate, authHandler.LogoutAll)
 
 	usersGroup := api.Group("/users", authenticate)
 	usersGroup.Patch("/:id/role", auth.RequireRole(auth.RoleRG), authHandler.UpdateUserRole)

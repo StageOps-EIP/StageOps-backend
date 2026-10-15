@@ -20,14 +20,42 @@ type mockAuthService struct {
 	mock.Mock
 }
 
-func (m *mockAuthService) Register(ctx context.Context, email, password string) (string, error) {
+func (m *mockAuthService) Register(ctx context.Context, email, password string) (*TokenPair, error) {
 	args := m.Called(ctx, email, password)
-	return args.String(0), args.Error(1)
+	if value, ok := args.Get(0).(*TokenPair); ok {
+		return value, args.Error(1)
+	}
+	if value, ok := args.Get(0).(string); ok && value != "" {
+		return &TokenPair{AccessToken: value, TokenType: "Bearer"}, args.Error(1)
+	}
+	return nil, args.Error(1)
 }
 
-func (m *mockAuthService) Login(ctx context.Context, email, password string) (string, error) {
+func (m *mockAuthService) Login(ctx context.Context, email, password string) (*TokenPair, error) {
 	args := m.Called(ctx, email, password)
-	return args.String(0), args.Error(1)
+	if value, ok := args.Get(0).(*TokenPair); ok {
+		return value, args.Error(1)
+	}
+	if value, ok := args.Get(0).(string); ok && value != "" {
+		return &TokenPair{AccessToken: value, TokenType: "Bearer"}, args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
+func (m *mockAuthService) Refresh(ctx context.Context, refreshToken string) (*TokenPair, error) {
+	args := m.Called(ctx, refreshToken)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*TokenPair), args.Error(1)
+}
+
+func (m *mockAuthService) Logout(ctx context.Context, refreshToken string) error {
+	return m.Called(ctx, refreshToken).Error(0)
+}
+
+func (m *mockAuthService) LogoutAll(ctx context.Context, userID string) error {
+	return m.Called(ctx, userID).Error(0)
 }
 
 func (m *mockAuthService) GetUser(ctx context.Context, id string) (*UserPublic, error) {
@@ -66,7 +94,10 @@ func newTestApp(svc AuthService, jwtSecret string) *fiber.App {
 	authGroup := api.Group("/auth")
 	authGroup.Post("/register", h.Register)
 	authGroup.Post("/login", h.Login)
+	authGroup.Post("/refresh", h.Refresh)
+	authGroup.Post("/logout", h.Logout)
 	authGroup.Get("/me", JWTMiddleware(jwtSecret), h.Me)
+	authGroup.Post("/logout-all", JWTMiddleware(jwtSecret), h.LogoutAll)
 
 	usersGroup := api.Group("/users", JWTMiddleware(jwtSecret))
 	usersGroup.Patch("/:id/role", RequireRole(RoleRG), h.UpdateUserRole)
@@ -135,7 +166,7 @@ func TestRegisterHandler_Success(t *testing.T) {
 
 	var result map[string]string
 	json.NewDecoder(resp.Body).Decode(&result)
-	assert.Equal(t, "jwt.token.here", result["token"])
+	assert.Equal(t, "jwt.token.here", result["access_token"])
 	svc.AssertExpectations(t)
 }
 
@@ -194,7 +225,7 @@ func TestLoginHandler_Success(t *testing.T) {
 
 	var result map[string]string
 	json.NewDecoder(resp.Body).Decode(&result)
-	assert.Equal(t, "jwt.token.here", result["token"])
+	assert.Equal(t, "jwt.token.here", result["access_token"])
 	svc.AssertExpectations(t)
 }
 
@@ -248,6 +279,47 @@ func TestLoginHandler_UnknownEmail(t *testing.T) {
 	})
 
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	svc.AssertExpectations(t)
+}
+
+func TestRefreshHandler_RotatesTokens(t *testing.T) {
+	svc := new(mockAuthService)
+	app := newTestApp(svc, "test-secret")
+	expected := &TokenPair{
+		AccessToken: "new-access", RefreshToken: "new-refresh",
+		TokenType: "Bearer", ExpiresIn: 900,
+	}
+	svc.On("Refresh", mock.Anything, "old-refresh").Return(expected, nil)
+
+	resp := postJSON(app, "/api/auth/refresh", map[string]string{"refresh_token": "old-refresh"})
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	var result TokenPair
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, expected, &result)
+	svc.AssertExpectations(t)
+}
+
+func TestRefreshHandler_InvalidToken(t *testing.T) {
+	svc := new(mockAuthService)
+	app := newTestApp(svc, "test-secret")
+	svc.On("Refresh", mock.Anything, "invalid-refresh").Return(nil, ErrInvalidRefresh)
+
+	resp := postJSON(app, "/api/auth/refresh", map[string]string{"refresh_token": "invalid-refresh"})
+
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	errObj := decodeError(resp)
+	assert.Equal(t, "INVALID_REFRESH_TOKEN", errObj["code"])
+}
+
+func TestLogoutHandler_RevokesSession(t *testing.T) {
+	svc := new(mockAuthService)
+	app := newTestApp(svc, "test-secret")
+	svc.On("Logout", mock.Anything, "refresh-token").Return(nil)
+
+	resp := postJSON(app, "/api/auth/logout", map[string]string{"refresh_token": "refresh-token"})
+
+	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
 	svc.AssertExpectations(t)
 }
 
