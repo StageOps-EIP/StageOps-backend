@@ -2,6 +2,9 @@ package auth
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -114,7 +117,7 @@ func (s *Service) Register(ctx context.Context, email, password string) (string,
 
 	now := time.Now().UTC()
 	user := &User{
-		ID:              fmt.Sprintf("user::%s", uuid.New().String()),
+		ID:              emailDocumentID(email, s.jwtSecret),
 		Type:            "user",
 		Email:           email,
 		Role:            DefaultRole,
@@ -137,6 +140,12 @@ func (s *Service) Register(ctx context.Context, email, password string) (string,
 	}
 
 	return token, nil
+}
+
+func emailDocumentID(email, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(email))
+	return "user::" + hex.EncodeToString(mac.Sum(nil))
 }
 
 // Login checks credentials and returns a JWT on success.

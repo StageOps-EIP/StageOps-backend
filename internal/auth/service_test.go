@@ -146,6 +146,16 @@ func TestRegister_EmailAlreadyExists(t *testing.T) {
 	repo.AssertExpectations(t)
 }
 
+func TestEmailDocumentIDIsStableAndDoesNotExposeEmail(t *testing.T) {
+	first := emailDocumentID("user@example.com", "secret-one")
+	second := emailDocumentID("user@example.com", "secret-one")
+	withAnotherSecret := emailDocumentID("user@example.com", "secret-two")
+
+	assert.Equal(t, first, second)
+	assert.NotContains(t, first, "user@example.com")
+	assert.NotEqual(t, first, withAnotherSecret)
+}
+
 func TestRegister_ValidationError_Email(t *testing.T) {
 	repo := new(mockUserRepo)
 	svc := NewService(repo, nil, "test-secret")
