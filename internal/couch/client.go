@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -34,16 +36,41 @@ type Client struct {
 
 // New returns a Client ready to use.
 func New(cfg Config) *Client {
+	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
 	return &Client{
 		cfg:  cfg,
 		http: &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
+// Ping verifies that CouchDB is reachable and ready to serve requests.
+func (c *Client) Ping(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.cfg.BaseURL+"/_up", nil)
+	if err != nil {
+		return fmt.Errorf("building health request: %w", err)
+	}
+	req.SetBasicAuth(c.cfg.Username, c.cfg.Password)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("checking CouchDB health: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("CouchDB health returned status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func (c *Client) documentURL(id string) string {
+	return fmt.Sprintf("%s/%s/%s", c.cfg.BaseURL, url.PathEscape(c.cfg.DB), url.PathEscape(id))
+}
+
 // GetDoc fetches the document with the given CouchDB _id and unmarshals it
 // into dest (must be a non-nil pointer). Returns ErrNotFound on 404.
 func (c *Client) GetDoc(ctx context.Context, id string, dest interface{}) error {
-	rawURL := fmt.Sprintf("%s/%s/%s", c.cfg.BaseURL, c.cfg.DB, id)
+	rawURL := c.documentURL(id)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
@@ -78,7 +105,7 @@ func (c *Client) PutDoc(ctx context.Context, id string, doc interface{}) error {
 		return fmt.Errorf("encoding document: %w", err)
 	}
 
-	rawURL := fmt.Sprintf("%s/%s/%s", c.cfg.BaseURL, c.cfg.DB, id)
+	rawURL := c.documentURL(id)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, rawURL, bytes.NewReader(body))
 	if err != nil {
@@ -104,7 +131,14 @@ func (c *Client) PutDoc(ctx context.Context, id string, doc interface{}) error {
 
 // DeleteDoc deletes the document identified by id at the given revision.
 func (c *Client) DeleteDoc(ctx context.Context, id, rev string) error {
-	rawURL := fmt.Sprintf("%s/%s/%s?rev=%s", c.cfg.BaseURL, c.cfg.DB, id, rev)
+	parsed, err := url.Parse(c.documentURL(id))
+	if err != nil {
+		return fmt.Errorf("building document URL: %w", err)
+	}
+	query := parsed.Query()
+	query.Set("rev", rev)
+	parsed.RawQuery = query.Encode()
+	rawURL := parsed.String()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, rawURL, nil)
 	if err != nil {
@@ -135,7 +169,10 @@ func (c *Client) DeleteDoc(ctx context.Context, id, rev string) error {
 func (c *Client) ListByView(ctx context.Context, design, view string, dest interface{}) error {
 	rawURL := fmt.Sprintf(
 		"%s/%s/_design/%s/_view/%s?include_docs=true",
-		c.cfg.BaseURL, c.cfg.DB, design, view,
+		c.cfg.BaseURL,
+		url.PathEscape(c.cfg.DB),
+		url.PathEscape(design),
+		url.PathEscape(view),
 	)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
