@@ -8,6 +8,8 @@ var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrAccountLocked      = errors.New("account locked")
 	ErrForbidden          = errors.New("forbidden")
+	ErrSessionNotFound    = errors.New("session not found")
+	ErrInvalidRefresh     = errors.New("invalid refresh token")
 )
 
 // ValidationError carries a user-facing message for input validation failures.

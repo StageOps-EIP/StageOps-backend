@@ -86,6 +86,18 @@ upsert_design "$AUTH_DB" "users" '{
   }
 }'
 
+upsert_design "$AUTH_DB" "sessions" '{
+  "_id": "_design/sessions",
+  "views": {
+    "by_refresh_hash": {
+      "map": "function(doc) { if (doc.type === \"session\") { if (doc.refresh_token_hash) emit(doc.refresh_token_hash, null); if (doc.previous_refresh_hash) emit(doc.previous_refresh_hash, null); } }"
+    },
+    "by_user": {
+      "map": "function(doc) { if (doc.type === \"session\" && doc.user_id) emit(doc.user_id, null); }"
+    }
+  }
+}'
+
 upsert_design "$DATA_DB" "equipment" '{
   "_id": "_design/equipment",
   "views": {

@@ -27,3 +27,27 @@ type UserPublic struct {
 	AssignedModules []string  `json:"assigned_modules"`
 	CreatedAt       time.Time `json:"created_at"`
 }
+
+// Session stores the server-side state of a refresh-token family.
+// Only SHA-256 token fingerprints are persisted.
+type Session struct {
+	ID                  string     `json:"_id"`
+	Rev                 string     `json:"_rev,omitempty"`
+	Type                string     `json:"type"`
+	UserID              string     `json:"user_id"`
+	TheatreID           string     `json:"theatre_id"`
+	RefreshTokenHash    string     `json:"refresh_token_hash"`
+	PreviousRefreshHash string     `json:"previous_refresh_hash,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	LastUsedAt          time.Time  `json:"last_used_at"`
+	ExpiresAt           time.Time  `json:"expires_at"`
+	RevokedAt           *time.Time `json:"revoked_at,omitempty"`
+}
+
+// TokenPair is returned after a successful authentication or token rotation.
+type TokenPair struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int64  `json:"expires_in"`
+}
