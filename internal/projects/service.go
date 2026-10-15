@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stageops/backend/internal/audit"
+	"github.com/stageops/backend/internal/tenant"
 )
 
 const (
@@ -63,11 +64,16 @@ func (s *Service) Create(ctx context.Context, input CreateInput, authorID, autho
 	if input.ModulesConfig != nil {
 		modulesConfig = *input.ModulesConfig
 	}
+	theatreID, err := tenant.RequireTheatreID(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	now := time.Now().UTC()
 	project := &Project{
 		ID:            fmt.Sprintf("project::%s", uuid.NewString()),
 		Type:          docType,
+		TheatreID:     theatreID,
 		Name:          strings.TrimSpace(input.Name),
 		Venue:         strings.TrimSpace(input.Venue),
 		StartDate:     input.StartDate,

@@ -113,8 +113,8 @@ upsert_design "$AUTH_DB" "devices" '{
 upsert_design "$DATA_DB" "equipment" '{
   "_id": "_design/equipment",
   "views": {
-    "all": {
-      "map": "function(doc) { if (doc.type === \"equipment\") emit(doc._id, null); }"
+    "by_theatre": {
+      "map": "function(doc) { if (doc.type === \"equipment\" && doc.theatre_id) emit(doc.theatre_id, null); }"
     }
   }
 }'
@@ -122,8 +122,8 @@ upsert_design "$DATA_DB" "equipment" '{
 upsert_design "$DATA_DB" "events" '{
   "_id": "_design/events",
   "views": {
-    "all": {
-      "map": "function(doc) { if (doc.type === \"event\") emit(doc._id, null); }"
+    "by_theatre": {
+      "map": "function(doc) { if (doc.type === \"event\" && doc.theatre_id) emit(doc.theatre_id, null); }"
     }
   }
 }'
@@ -131,8 +131,8 @@ upsert_design "$DATA_DB" "events" '{
 upsert_design "$DATA_DB" "incidents" '{
   "_id": "_design/incidents",
   "views": {
-    "all": {
-      "map": "function(doc) { if (doc.type === \"incident\") emit(doc._id, null); }"
+    "by_theatre": {
+      "map": "function(doc) { if (doc.type === \"incident\" && doc.theatre_id) emit(doc.theatre_id, null); }"
     }
   }
 }'
@@ -140,8 +140,8 @@ upsert_design "$DATA_DB" "incidents" '{
 upsert_design "$DATA_DB" "team" '{
   "_id": "_design/team",
   "views": {
-    "all": {
-      "map": "function(doc) { if (doc.type === \"member\") emit(doc._id, null); }"
+    "by_theatre": {
+      "map": "function(doc) { if (doc.type === \"member\" && doc.theatre_id) emit(doc.theatre_id, null); }"
     }
   }
 }'
@@ -149,8 +149,8 @@ upsert_design "$DATA_DB" "team" '{
 upsert_design "$DATA_DB" "projects" '{
   "_id": "_design/projects",
   "views": {
-    "all": {
-      "map": "function(doc) { if (doc.type === \"project\") emit(doc._id, null); }"
+    "by_theatre": {
+      "map": "function(doc) { if (doc.type === \"project\" && doc.theatre_id) emit(doc.theatre_id, null); }"
     }
   }
 }'

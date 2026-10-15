@@ -8,6 +8,7 @@ type doc struct {
 	ID          string   `json:"_id"`
 	Rev         string   `json:"_rev,omitempty"`
 	Type        string   `json:"type"`
+	TheatreID   string   `json:"theatre_id"`
 	Name        string   `json:"name"`
 	Role        string   `json:"role"`
 	Avatar      string   `json:"avatar,omitempty"`
@@ -18,6 +19,7 @@ type doc struct {
 
 type Member struct {
 	ID          string   `json:"id"`
+	TheatreID   string   `json:"theatre_id"`
 	Name        string   `json:"name"`
 	Role        string   `json:"role"`
 	Avatar      string   `json:"avatar,omitempty"`
@@ -42,6 +44,7 @@ func (e *ValidationError) Error() string { return e.Message }
 func toPublic(d *doc) *Member {
 	return &Member{
 		ID:          d.ID,
+		TheatreID:   d.TheatreID,
 		Name:        d.Name,
 		Role:        d.Role,
 		Avatar:      d.Avatar,

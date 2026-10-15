@@ -35,6 +35,7 @@ type doc struct {
 	ID                string     `json:"_id"`
 	Rev               string     `json:"_rev,omitempty"`
 	Type              string     `json:"type"`
+	TheatreID         string     `json:"theatre_id"`
 	ProjectID         string     `json:"project_id"`
 	Module            string     `json:"module"`
 	Name              string     `json:"name"`
@@ -56,6 +57,7 @@ type doc struct {
 
 type Equipment struct {
 	ID                string     `json:"id"`
+	TheatreID         string     `json:"theatre_id"`
 	ProjectID         string     `json:"project_id"`
 	Module            string     `json:"module"`
 	Name              string     `json:"name"`
@@ -97,7 +99,7 @@ func (e *ValidationError) Error() string { return e.Message }
 
 func toPublic(d *doc) *Equipment {
 	return &Equipment{
-		ID: d.ID, ProjectID: d.ProjectID, Module: d.Module, Name: d.Name, Kind: d.Kind,
+		ID: d.ID, TheatreID: d.TheatreID, ProjectID: d.ProjectID, Module: d.Module, Name: d.Name, Kind: d.Kind,
 		QRCode: d.QRCode, Status: d.Status, Location: d.Location, Zone: d.Zone,
 		ResponsiblePerson: d.ResponsiblePerson, LastCheck: d.LastCheck, Position: d.Position,
 		DMXUniverse: d.DMXUniverse, DMXAddress: d.DMXAddress, DMXChannels: d.DMXChannels,

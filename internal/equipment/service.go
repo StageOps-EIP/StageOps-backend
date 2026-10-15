@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stageops/backend/internal/audit"
+	"github.com/stageops/backend/internal/tenant"
 )
 
 type EquipmentService interface {
@@ -66,6 +67,10 @@ func (s *Service) Create(ctx context.Context, projectID, module string, input In
 	}
 
 	now := time.Now().UTC()
+	theatreID, err := tenant.RequireTheatreID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if input.Status == "" {
 		input.Status = "ok"
 	}
@@ -74,6 +79,7 @@ func (s *Service) Create(ctx context.Context, projectID, module string, input In
 	}
 	item := &doc{
 		ID: fmt.Sprintf("equipment::%s", uuid.NewString()), Type: docType,
+		TheatreID: theatreID,
 		ProjectID: projectID, Module: module, Name: strings.TrimSpace(input.Name), Kind: input.Kind,
 		QRCode: input.QRCode, Status: input.Status, Location: input.Location, Zone: input.Zone,
 		ResponsiblePerson: input.ResponsiblePerson, LastCheck: input.LastCheck, Position: input.Position,
