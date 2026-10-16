@@ -43,10 +43,6 @@ func (r *Repository) FindByID(ctx context.Context, id string) (*Member, error) {
 }
 
 func (r *Repository) Create(ctx context.Context, input *Input) (*Member, error) {
-	if err := validateInput(input); err != nil {
-		return nil, err
-	}
-
 	id := fmt.Sprintf("member::%s", uuid.New().String())
 	theatreID, err := tenant.RequireTheatreID(ctx)
 	if err != nil {
@@ -71,10 +67,6 @@ func (r *Repository) Create(ctx context.Context, input *Input) (*Member, error) 
 }
 
 func (r *Repository) Update(ctx context.Context, id string, input *Input) (*Member, error) {
-	if err := validateInput(input); err != nil {
-		return nil, err
-	}
-
 	current, err := r.findDocByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -121,14 +113,4 @@ func (r *Repository) findDocByID(ctx context.Context, id string) (*doc, error) {
 		return nil, ErrNotFound
 	}
 	return &current, nil
-}
-
-func validateInput(input *Input) error {
-	if input.Name == "" {
-		return &ValidationError{Message: "Le champ 'name' est requis."}
-	}
-	if input.Email == "" {
-		return &ValidationError{Message: "Le champ 'email' est requis."}
-	}
-	return nil
 }
