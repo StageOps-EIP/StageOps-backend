@@ -16,6 +16,8 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      OFFLINE_SIGNING_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -42,7 +44,8 @@ jobs:
 
       - name: Validate deployment files
         run: |
-          sh -n entrypoint.sh deploy/deploy.sh deploy/backup.sh deploy/restore.sh
+          sh -n entrypoint.sh deploy/deploy.sh deploy/backup.sh deploy/restore.sh \
+            deploy/migrate-theatre.sh deploy/migrate-theatre-container.sh
           docker compose --env-file .env.production.example -f docker-compose.prod.yml config --quiet
           docker run --rm \
             --env API_DOMAIN=api.example.com \
@@ -56,12 +59,17 @@ jobs:
 
       - name: Smoke test production services
         run: |
-          trap 'docker compose --env-file .env.production.example -f docker-compose.prod.yml down --volumes' EXIT
-          docker compose --env-file .env.production.example -f docker-compose.prod.yml up --detach --no-build --wait couchdb backend
-          docker compose --env-file .env.production.example -f docker-compose.prod.yml exec --no-TTY backend \
+          compose_files='-f docker-compose.prod.yml -f .github/docker-compose.integration.yml'
+          trap 'docker compose --env-file .env.production.example -f docker-compose.prod.yml -f .github/docker-compose.integration.yml down --volumes' EXIT
+          docker compose --env-file .env.production.example $compose_files up --detach --no-build --wait couchdb backend
+          docker compose --env-file .env.production.example $compose_files exec --no-TTY backend \
             curl --fail --silent http://127.0.0.1:3000/api/health/ready
-          docker compose --env-file .env.production.example -f docker-compose.prod.yml exec --no-TTY backend \
+          docker compose --env-file .env.production.example $compose_files exec --no-TTY backend \
             curl --fail --silent \
               --header 'Content-Type: application/json' \
               --data '{"email":"admin@example.com","password":"replace-with-Strong-Admin-Password-42!"}' \
               http://127.0.0.1:3000/api/auth/login
+          COUCHDB_TEST_URL=http://127.0.0.1:15984 \
+          COUCHDB_TEST_USER=stageops \
+          COUCHDB_TEST_PASSWORD=replace-with-at-least-32-random-characters \
+            go test -race -tags=integration ./internal/auth
