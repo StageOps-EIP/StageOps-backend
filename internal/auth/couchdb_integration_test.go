@@ -65,6 +65,7 @@ func TestCouchDBConcurrentRegistrationAndSessionPersistence(t *testing.T) {
 
 	cfg := CouchConfig{BaseURL: baseURL, DB: database, Username: username, Password: password}
 	userRepo := NewCouchDBRepository(cfg)
+	sessionRepo := NewCouchDBSessionRepository(cfg)
 	service := NewServiceWithConfig(userRepo, nil, ServiceConfig{
 		JWT: JWTConfig{
 			Secret: "integration-jwt-secret-at-least-32-characters", Issuer: "integration",
@@ -72,37 +73,47 @@ func TestCouchDBConcurrentRegistrationAndSessionPersistence(t *testing.T) {
 		},
 		UserIDSecret:          "integration-user-id-secret-at-least-32-characters",
 		RegistrationTheatreID: "theatre::integration",
+		SessionRepository:     sessionRepo,
+		RefreshTTL:            time.Hour,
 	})
 
 	start := make(chan struct{})
-	errorsByAttempt := make(chan error, 2)
+	type registrationResult struct {
+		tokens *TokenPair
+		err    error
+	}
+	results := make(chan registrationResult, 2)
 	var waitGroup sync.WaitGroup
 	for range 2 {
 		waitGroup.Add(1)
 		go func() {
 			defer waitGroup.Done()
 			<-start
-			_, registerErr := service.Register(context.Background(), "unique@example.com", "SecurePass1!")
-			errorsByAttempt <- registerErr
+			tokens, registerErr := service.Register(context.Background(), "unique@example.com", "SecurePass1!")
+			results <- registrationResult{tokens: tokens, err: registerErr}
 		}()
 	}
 	close(start)
 	waitGroup.Wait()
-	close(errorsByAttempt)
+	close(results)
 
 	var successes, conflicts int
-	for registerErr := range errorsByAttempt {
+	var registeredTokens *TokenPair
+	for result := range results {
 		switch {
-		case registerErr == nil:
+		case result.err == nil:
 			successes++
-		case errors.Is(registerErr, ErrEmailAlreadyExists):
+			registeredTokens = result.tokens
+		case errors.Is(result.err, ErrEmailAlreadyExists):
 			conflicts++
 		default:
-			t.Fatalf("unexpected registration error: %v", registerErr)
+			t.Fatalf("unexpected registration error: %v", result.err)
 		}
 	}
 	assert.Equal(t, 1, successes)
 	assert.Equal(t, 1, conflicts)
+	require.NotNil(t, registeredTokens)
+	require.NotEmpty(t, registeredTokens.RefreshToken)
 
 	user, err := userRepo.FindByEmail(context.Background(), "unique@example.com")
 	require.NoError(t, err)
@@ -110,17 +121,54 @@ func TestCouchDBConcurrentRegistrationAndSessionPersistence(t *testing.T) {
 	assert.NotEqual(t, "SecurePass1!", user.PasswordHash)
 	assert.True(t, comparePassword(user.PasswordHash, "SecurePass1!"))
 
-	sessionRepo := NewCouchDBSessionRepository(cfg)
-	now := time.Now().UTC().Truncate(time.Second)
-	session := &Session{
-		ID: "session::integration", Type: "session", UserID: user.ID,
-		TheatreID: user.TheatreID, RefreshTokenHash: "integration-hash",
-		CreatedAt: now, LastUsedAt: now, ExpiresAt: now.Add(time.Hour),
-	}
-	require.NoError(t, sessionRepo.Create(context.Background(), session))
-	storedSession, err := sessionRepo.FindByID(context.Background(), session.ID)
+	sessionID, err := parseSessionRefreshToken(registeredTokens.RefreshToken)
 	require.NoError(t, err)
-	assert.Equal(t, session.RefreshTokenHash, storedSession.RefreshTokenHash)
+	storedSession, err := sessionRepo.FindByID(context.Background(), sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, hashRefreshToken(registeredTokens.RefreshToken), storedSession.RefreshTokenHash)
+	assert.Equal(t, user.ID, storedSession.UserID)
+
+	refreshStart := make(chan struct{})
+	refreshResults := make(chan registrationResult, 2)
+	for range 2 {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			<-refreshStart
+			tokens, refreshErr := service.Refresh(context.Background(), registeredTokens.RefreshToken)
+			refreshResults <- registrationResult{tokens: tokens, err: refreshErr}
+		}()
+	}
+	close(refreshStart)
+	waitGroup.Wait()
+	close(refreshResults)
+
+	var rotatedTokens *TokenPair
+	successes, conflicts = 0, 0
+	for result := range refreshResults {
+		switch {
+		case result.err == nil:
+			successes++
+			rotatedTokens = result.tokens
+		case errors.Is(result.err, ErrInvalidRefresh):
+			conflicts++
+		default:
+			t.Fatalf("unexpected refresh error: %v", result.err)
+		}
+	}
+	assert.Equal(t, 1, successes)
+	assert.Equal(t, 1, conflicts)
+	require.NotNil(t, rotatedTokens)
+
+	_, err = service.Refresh(context.Background(), rotatedTokens.RefreshToken)
+	assert.ErrorIs(t, err, ErrInvalidRefresh, "a concurrent replay must revoke the complete token family")
+
+	loginTokens, err := service.Login(context.Background(), "unique@example.com", "SecurePass1!")
+	require.NoError(t, err)
+	require.NoError(t, service.Logout(context.Background(), loginTokens.RefreshToken))
+
+	_, err = service.Refresh(context.Background(), loginTokens.RefreshToken)
+	assert.ErrorIs(t, err, ErrInvalidRefresh)
 }
 
 func integrationEnv(t *testing.T, key string) string {
