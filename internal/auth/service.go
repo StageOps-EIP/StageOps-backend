@@ -194,7 +194,7 @@ func (s *Service) Register(ctx context.Context, email, password string) (*TokenP
 		if s.mailer == nil {
 			return nil, fmt.Errorf("email verification is enabled without a mailer")
 		}
-		verificationToken, err = newRefreshToken()
+		verificationToken, err = newOpaqueToken()
 		if err != nil {
 			return nil, err
 		}
@@ -349,7 +349,7 @@ func (s *Service) issueTokenPair(ctx context.Context, user *User) (*TokenPair, e
 	if s.sessions == nil {
 		return pair, nil
 	}
-	refreshToken, err := newRefreshToken()
+	refreshToken, err := newSessionRefreshToken(sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -371,8 +371,12 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokenPair,
 	if s.sessions == nil || len(refreshToken) < 32 || len(refreshToken) > 512 {
 		return nil, ErrInvalidRefresh
 	}
+	sessionID, err := parseSessionRefreshToken(refreshToken)
+	if err != nil {
+		return nil, ErrInvalidRefresh
+	}
 	hash := hashRefreshToken(refreshToken)
-	session, err := s.sessions.FindByRefreshHash(ctx, hash)
+	session, err := s.sessions.FindByID(ctx, sessionID)
 	if err != nil {
 		if errors.Is(err, ErrSessionNotFound) {
 			return nil, ErrInvalidRefresh
@@ -392,7 +396,7 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokenPair,
 	if err != nil || user.TheatreID != session.TheatreID {
 		return nil, ErrInvalidRefresh
 	}
-	rotatedToken, err := newRefreshToken()
+	rotatedToken, err := newSessionRefreshToken(session.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -419,7 +423,11 @@ func (s *Service) Logout(ctx context.Context, refreshToken string) error {
 	if s.sessions == nil || refreshToken == "" {
 		return nil
 	}
-	session, err := s.sessions.FindByRefreshHash(ctx, hashRefreshToken(refreshToken))
+	sessionID, parseErr := parseSessionRefreshToken(refreshToken)
+	if parseErr != nil {
+		return nil
+	}
+	session, err := s.sessions.FindByID(ctx, sessionID)
 	if err != nil {
 		if errors.Is(err, ErrSessionNotFound) {
 			return nil
@@ -499,7 +507,7 @@ func (s *Service) ResendVerification(ctx context.Context, email string) error {
 	if !user.EmailVerificationRequired || user.EmailVerifiedAt != nil {
 		return nil
 	}
-	token, err := newRefreshToken()
+	token, err := newOpaqueToken()
 	if err != nil {
 		return err
 	}
@@ -517,12 +525,38 @@ func (s *Service) ResendVerification(ctx context.Context, email string) error {
 	return nil
 }
 
-func newRefreshToken() (string, error) {
+func newOpaqueToken() (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", fmt.Errorf("generating refresh token: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func newSessionRefreshToken(sessionID string) (string, error) {
+	if !strings.HasPrefix(sessionID, "session::") {
+		return "", fmt.Errorf("invalid session ID")
+	}
+	randomToken, err := newOpaqueToken()
+	if err != nil {
+		return "", err
+	}
+	return sessionID + "." + randomToken, nil
+}
+
+func parseSessionRefreshToken(token string) (string, error) {
+	sessionID, randomToken, ok := strings.Cut(token, ".")
+	if !ok || !strings.HasPrefix(sessionID, "session::") {
+		return "", ErrInvalidRefresh
+	}
+	if _, err := uuid.Parse(strings.TrimPrefix(sessionID, "session::")); err != nil {
+		return "", ErrInvalidRefresh
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(randomToken)
+	if err != nil || len(raw) != 32 {
+		return "", ErrInvalidRefresh
+	}
+	return sessionID, nil
 }
 
 func hashRefreshToken(token string) string {

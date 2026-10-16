@@ -349,9 +349,11 @@ func TestRefreshRotatesToken(t *testing.T) {
 	repo := new(mockUserRepo)
 	sessions := new(mockSessionRepo)
 	svc := newSessionService(repo, sessions)
-	refreshToken := "refresh-token-with-at-least-thirty-two-bytes"
+	sessionID := "session::11111111-1111-4111-8111-111111111111"
+	refreshToken, err := newSessionRefreshToken(sessionID)
+	assert.NoError(t, err)
 	session := &Session{
-		ID: "session::one", Rev: "1-a", Type: "session", UserID: "user::one",
+		ID: sessionID, Rev: "1-a", Type: "session", UserID: "user::one",
 		TheatreID: "theatre-default", RefreshTokenHash: hashRefreshToken(refreshToken),
 		ExpiresAt: time.Now().Add(time.Hour),
 	}
@@ -359,7 +361,7 @@ func TestRefreshRotatesToken(t *testing.T) {
 		ID: session.UserID, Type: "user", Email: "user@example.com", TheatreID: session.TheatreID,
 		Role: RoleSon, AssignedModules: []string{RoleSon},
 	}
-	sessions.On("FindByRefreshHash", mock.Anything, session.RefreshTokenHash).Return(session, nil)
+	sessions.On("FindByID", mock.Anything, session.ID).Return(session, nil)
 	repo.On("FindByID", mock.Anything, user.ID).Return(user, nil)
 	sessions.On("Update", mock.Anything, mock.MatchedBy(func(updated *Session) bool {
 		return updated.PreviousRefreshHash == hashRefreshToken(refreshToken) &&
@@ -379,21 +381,37 @@ func TestRefreshRejectsReplayAndRevokesSession(t *testing.T) {
 	repo := new(mockUserRepo)
 	sessions := new(mockSessionRepo)
 	svc := newSessionService(repo, sessions)
-	replayed := "replayed-refresh-token-with-thirty-two-bytes"
+	sessionID := "session::22222222-2222-4222-8222-222222222222"
+	replayed, err := newSessionRefreshToken(sessionID)
+	assert.NoError(t, err)
 	session := &Session{
-		ID: "session::one", Type: "session", UserID: "user::one", TheatreID: "theatre-default",
+		ID: sessionID, Type: "session", UserID: "user::one", TheatreID: "theatre-default",
 		RefreshTokenHash: "current-hash", PreviousRefreshHash: hashRefreshToken(replayed),
 		ExpiresAt: time.Now().Add(time.Hour),
 	}
-	sessions.On("FindByRefreshHash", mock.Anything, hashRefreshToken(replayed)).Return(session, nil)
+	sessions.On("FindByID", mock.Anything, session.ID).Return(session, nil)
 	sessions.On("Update", mock.Anything, mock.MatchedBy(func(updated *Session) bool {
 		return updated.RevokedAt != nil
 	})).Return(nil)
 
-	_, err := svc.Refresh(context.Background(), replayed)
+	_, err = svc.Refresh(context.Background(), replayed)
 
 	assert.ErrorIs(t, err, ErrInvalidRefresh)
 	sessions.AssertExpectations(t)
+}
+
+func TestSessionRefreshTokenCarriesOnlySessionIDAndRandomSecret(t *testing.T) {
+	sessionID := "session::33333333-3333-4333-8333-333333333333"
+	token, err := newSessionRefreshToken(sessionID)
+	assert.NoError(t, err)
+
+	parsedSessionID, err := parseSessionRefreshToken(token)
+
+	assert.NoError(t, err)
+	assert.Equal(t, sessionID, parsedSessionID)
+	assert.NotContains(t, token, "user::")
+	_, err = parseSessionRefreshToken("session::invalid.not-a-secret")
+	assert.ErrorIs(t, err, ErrInvalidRefresh)
 }
 
 func TestCreateOfflineGrantScopesDeviceToAuthenticatedTheatre(t *testing.T) {
