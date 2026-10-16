@@ -25,7 +25,13 @@ Remplacer toutes les valeurs de `.env.production`. Générer les secrets avec :
 openssl rand -base64 48
 ```
 
-Le secret JWT et le mot de passe CouchDB doivent être différents.
+Générer séparément la graine Ed25519 utilisée pour les autorisations offline :
+
+```bash
+openssl rand -base64 32
+```
+
+`JWT_SECRET`, `USER_ID_SECRET`, `OFFLINE_SIGNING_KEY` et le mot de passe CouchDB doivent être distincts. Configurer également le serveur SMTP, l'URL HTTPS de vérification d'email et un identifiant stable dans `DEFAULT_THEATRE_ID`.
 
 `BOOTSTRAP_ADMIN_EMAIL` et `BOOTSTRAP_ADMIN_PASSWORD` créent le premier régisseur général uniquement lorsqu'aucun compte `rg` n'existe. Après le premier déploiement réussi, retirer ces deux variables de `.env.production`, puis relancer le déploiement. L'inscription publique reste désactivée par défaut.
 
@@ -37,7 +43,17 @@ sh ./deploy/deploy.sh
 
 Caddy demande et renouvelle automatiquement le certificat TLS lorsque `API_DOMAIN` pointe vers le VPS et que les ports 80/443 sont accessibles.
 
-Cette configuration force TLS 1.3. Le modèle de données actuel n'isole pas encore plusieurs théâtres : utiliser ce déploiement pour une instance mono-théâtre avec comptes administrés, jusqu'à l'ajout du tenant aux documents et aux autorisations.
+Cette configuration force TLS 1.3. Les identités, sessions, appareils, modules et données opérationnelles sont isolés par `theatre_id`. L'inscription publique affecte les nouveaux comptes au `DEFAULT_THEATRE_ID`; laisser cette inscription désactivée si l'instance ne doit accepter que des comptes administrés.
+
+### Mise à niveau d'une base existante
+
+Après la mise à jour du code et avant de remettre l'instance en service, affecter les anciens documents sans `theatre_id` au théâtre par défaut :
+
+```bash
+sh ./deploy/migrate-theatre.sh --confirm
+```
+
+Le script crée automatiquement une sauvegarde cohérente avant la migration. Vérifier `DEFAULT_THEATRE_ID` avant de confirmer : l'opération ne peut pas deviner le théâtre d'origine d'un document historique.
 
 ## Vérifications
 
@@ -86,6 +102,8 @@ Le volume `stageops_couchdb_data` est conservé entre les reconstructions du bac
 ## PouchDB et synchronisation
 
 CouchDB n'est volontairement pas publié par ce Compose. L'identifiant administrateur utilisé par le backend ne doit jamais être envoyé à une application web ou mobile.
+
+Les clients peuvent vérifier un grant offline Ed25519 et ouvrir leur base PouchDB locale sans réseau. La clé publique est exposée par `/.well-known/jwks.json`. Cette autorisation locale ne constitue pas encore une passerelle de réplication CouchDB.
 
 Avant d'activer la réplication PouchDB, ajouter un accès de synchronisation distinct avec :
 

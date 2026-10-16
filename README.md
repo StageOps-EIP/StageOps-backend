@@ -7,13 +7,15 @@ API REST de StageOps pour la gestion des projets scéniques, des équipes, du ma
 - Go 1.27
 - Fiber v2
 - CouchDB via son API HTTP
-- JWT HS256 et bcrypt
+- JWT HS256, grants Ed25519, bcrypt et SMTP/TLS
 - Docker
 - PouchDB côté client pour le mode offline-first (intégration frontend)
 
 ## Fonctionnalités disponibles
 
-- inscription, connexion, verrouillage après échecs répétés et endpoint utilisateur courant ;
+- inscription avec vérification email, connexion, sessions rotatives et révocation ;
+- grants Ed25519 pour l'accès contrôlé à PouchDB hors réseau ;
+- isolation des identités et données par théâtre ;
 - rôles `rg`, `lumiere`, `son` et `plateau` ;
 - attribution de plusieurs modules à un utilisateur ;
 - projets avec modules `lighting`, `audio` et `stage` activables séparément ;
@@ -30,7 +32,7 @@ internal/auth/          authentification et autorisations
 internal/projects/      cycle de vie des projets
 internal/equipment/     matériel et patch DMX
 internal/incidents/     suivi des incidents
-internal/modules/       configuration globale historique
+internal/modules/       configuration par théâtre
 internal/audit/         journal append-only
 internal/couch/         client HTTP CouchDB partagé
 ```
@@ -50,10 +52,15 @@ Variables requises :
 | Variable | Description |
 |---|---|
 | `COUCHDB_URL` | URL de CouchDB, par exemple `http://localhost:5984` |
-| `COUCHDB_DB` | Nom de la base |
+| `COUCHDB_DB` | Base des données opérationnelles |
+| `COUCHDB_AUTH_DB` | Base séparée des identités et sessions |
 | `COUCHDB_USER` | Utilisateur CouchDB |
 | `COUCHDB_PASSWORD` | Mot de passe CouchDB |
 | `JWT_SECRET` | Secret de signature JWT long et aléatoire |
+| `USER_ID_SECRET` | Secret HMAC distinct pour les identifiants utilisateurs |
+| `OFFLINE_SIGNING_KEY` | Graine Ed25519 de 32 octets encodée en base64 |
+| `DEFAULT_THEATRE_ID` | Théâtre attribué aux comptes publics et au bootstrap |
+| `SMTP_*` | Paramètres d'envoi des emails de vérification |
 | `APP_PORT` | Port HTTP, `3000` par défaut |
 | `CORS_ORIGINS` | Origines autorisées, séparées par des virgules |
 | `TLS_CERT` | Chemin facultatif du certificat TLS |
@@ -107,7 +114,14 @@ Toutes les routes protégées attendent `Authorization: Bearer <token>`.
 |---|---|---|
 | `POST` | `/api/auth/register` | public |
 | `POST` | `/api/auth/login` | public |
+| `POST` | `/api/auth/verify-email` | public |
+| `POST` | `/api/auth/refresh` | refresh token |
+| `POST` | `/api/auth/logout` | refresh token |
+| `POST` | `/api/auth/logout-all` | authentifié |
 | `GET` | `/api/auth/me` | authentifié |
+| `GET, DELETE` | `/api/auth/devices[/:id]` | authentifié |
+| `POST` | `/api/auth/offline-grants` | authentifié |
+| `GET` | `/.well-known/jwks.json` | public |
 | `PATCH` | `/api/users/:id/role` | RG |
 | `PATCH` | `/api/users/:id/modules` | RG |
 | `GET, POST` | `/api/projects/` | lecture authentifiée, création RG |
@@ -138,7 +152,9 @@ go test ./...
 go vet ./...
 ```
 
-La CI exécute automatiquement le contrôle du formatage, les tests avec le détecteur de courses et `go vet` sur les branches et pull requests.
+La CI exécute automatiquement le contrôle du formatage, les tests avec le détecteur de courses, `go vet`, `govulncheck` et un test d'intégration contre un vrai CouchDB.
+
+Le flux complet est documenté dans [`docs/authentication.md`](docs/authentication.md), avec le mapping RNCP backend dans [`docs/rncp-block-2.md`](docs/rncp-block-2.md).
 
 ## Licence
 
