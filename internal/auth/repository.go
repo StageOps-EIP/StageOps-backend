@@ -231,7 +231,7 @@ func (r *CouchDBRepository) UpdateUser(ctx context.Context, user *User) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusConflict {
-		return fmt.Errorf("document conflict on update")
+		return fmt.Errorf("updating user revision: %w", ErrUserConflict)
 	}
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("CouchDB returned status %d", resp.StatusCode)

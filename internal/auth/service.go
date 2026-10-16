@@ -37,6 +37,7 @@ const (
 	maxFailedAttempts = 5
 	// lockoutDuration is how long the account stays locked after maxFailedAttempts.
 	lockoutDuration        = 15 * time.Minute
+	lockoutCASRetries      = 3
 	defaultRefreshTTL      = 30 * 24 * time.Hour
 	defaultVerificationTTL = 24 * time.Hour
 )
@@ -709,17 +710,29 @@ func (s *Service) generateAccessToken(user *User, sessionID string) (string, err
 }
 
 // recordFailedAttempt increments the failure counter and locks the account
-// when maxFailedAttempts is reached. The update is best-effort.
+// when maxFailedAttempts is reached. CouchDB conflicts are retried from the
+// latest stored revision so simultaneous failures are not silently lost.
 func (s *Service) recordFailedAttempt(ctx context.Context, user *User) {
-	user.FailedAttempts++
-	user.UpdatedAt = time.Now().UTC()
+	current := user
+	for attempt := 0; attempt < lockoutCASRetries; attempt++ {
+		now := time.Now().UTC()
+		current.FailedAttempts++
+		current.UpdatedAt = now
+		if current.FailedAttempts >= maxFailedAttempts {
+			locked := now.Add(lockoutDuration)
+			current.LockedUntil = &locked
+		}
 
-	if user.FailedAttempts >= maxFailedAttempts {
-		locked := time.Now().UTC().Add(lockoutDuration)
-		user.LockedUntil = &locked
+		err := s.repo.UpdateUser(ctx, current)
+		if err == nil || !errors.Is(err, ErrUserConflict) {
+			return
+		}
+		latest, findErr := s.repo.FindByID(ctx, current.ID)
+		if findErr != nil {
+			return
+		}
+		current = latest
 	}
-
-	_ = s.repo.UpdateUser(ctx, user)
 }
 
 // GetUser retrieves a user by document ID and returns the public representation.

@@ -615,6 +615,35 @@ func TestLogin_WrongPassword(t *testing.T) {
 	repo.AssertExpectations(t)
 }
 
+func TestLogin_RetriesFailedAttemptAfterCouchDBConflict(t *testing.T) {
+	repo := new(mockUserRepo)
+	svc := NewService(repo, nil, "test-secret")
+	hash, err := hashPassword("SecurePass1!")
+	assert.NoError(t, err)
+	stale := &User{
+		ID: "user::abc", Rev: "1-stale", Type: "user", Email: "user@example.com",
+		PasswordHash: hash,
+	}
+	latest := &User{
+		ID: "user::abc", Rev: "2-latest", Type: "user", Email: "user@example.com",
+		PasswordHash: hash, FailedAttempts: 2,
+	}
+	repo.On("FindByEmail", mock.Anything, "user@example.com").Return(stale, nil).Once()
+	repo.On("UpdateUser", mock.Anything, mock.MatchedBy(func(user *User) bool {
+		return user.Rev == "1-stale" && user.FailedAttempts == 1
+	})).Return(ErrUserConflict).Once()
+	repo.On("FindByID", mock.Anything, "user::abc").Return(latest, nil).Once()
+	repo.On("UpdateUser", mock.Anything, mock.MatchedBy(func(user *User) bool {
+		return user.Rev == "2-latest" && user.FailedAttempts == 3
+	})).Return(nil).Once()
+
+	_, err = svc.Login(context.Background(), "user@example.com", "WrongPass1!")
+
+	assert.ErrorIs(t, err, ErrInvalidCredentials)
+	assert.Equal(t, 3, latest.FailedAttempts)
+	repo.AssertExpectations(t)
+}
+
 func TestLogin_AccountLocked(t *testing.T) {
 	repo := new(mockUserRepo)
 	svc := NewService(repo, nil, "test-secret")

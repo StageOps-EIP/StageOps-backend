@@ -4,6 +4,7 @@ import "errors"
 
 var (
 	ErrUserNotFound        = errors.New("user not found")
+	ErrUserConflict        = errors.New("user document conflict")
 	ErrEmailAlreadyExists  = errors.New("email already exists")
 	ErrInvalidCredentials  = errors.New("invalid credentials")
 	ErrAccountLocked       = errors.New("account locked")

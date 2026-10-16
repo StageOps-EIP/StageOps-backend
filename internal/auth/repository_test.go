@@ -61,3 +61,18 @@ func TestCouchDBRepositoryFindByVerificationHash(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "user::one", user.ID)
 }
+
+func TestCouchDBRepositoryUpdateUserReturnsTypedConflict(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPut, r.Method)
+		assert.Equal(t, "/stageops_auth/user::one", r.URL.Path)
+		w.WriteHeader(http.StatusConflict)
+	}))
+	t.Cleanup(server.Close)
+
+	repo := NewCouchDBRepository(CouchConfig{BaseURL: server.URL, DB: "stageops_auth"})
+	err := repo.UpdateUser(context.Background(), &User{ID: "user::one", Rev: "1-old", Type: "user"})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUserConflict)
+}
