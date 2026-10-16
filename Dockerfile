@@ -25,7 +25,8 @@ WORKDIR /app
 
 COPY --from=builder --chown=stageops:stageops /out/server ./server
 COPY --chown=stageops:stageops entrypoint.sh ./entrypoint.sh
-RUN chmod 0555 ./server ./entrypoint.sh
+COPY --chown=stageops:stageops deploy/migrate-theatre-container.sh ./migrate-theatre.sh
+RUN chmod 0555 ./server ./entrypoint.sh ./migrate-theatre.sh
 
 EXPOSE 3000
 
