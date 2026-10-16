@@ -210,6 +210,7 @@ func (s *Service) Register(ctx context.Context, email, password string) (*TokenP
 		}
 		return nil, fmt.Errorf("creating user: %w", err)
 	}
+	s.logAuthEvent(ctx, audit.ActionUserRegistered, user.ID, user.TheatreID, user.ID)
 	if s.requireVerification {
 		if err := s.mailer.SendVerification(user.Email, verificationToken); err != nil {
 			return nil, fmt.Errorf("sending verification email: %w", err)
@@ -294,16 +295,19 @@ func (s *Service) Login(ctx context.Context, email, password string) (*TokenPair
 	user, err := s.repo.FindByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
+			s.logAuthEvent(ctx, audit.ActionLoginFailed, "", s.registrationTheatre, emailDocumentID(email, s.userIDSecret))
 			return nil, ErrInvalidCredentials
 		}
 		return nil, fmt.Errorf("finding user: %w", err)
 	}
 
 	if user.LockedUntil != nil && time.Now().UTC().Before(*user.LockedUntil) {
+		s.logAuthEvent(ctx, audit.ActionLoginFailed, user.ID, user.TheatreID, user.ID)
 		return nil, ErrAccountLocked
 	}
 	if !comparePassword(user.PasswordHash, password) {
 		s.recordFailedAttempt(ctx, user)
+		s.logAuthEvent(ctx, audit.ActionLoginFailed, user.ID, user.TheatreID, user.ID)
 		return nil, ErrInvalidCredentials
 	}
 	if user.EmailVerificationRequired && user.EmailVerifiedAt == nil {
@@ -326,6 +330,7 @@ func (s *Service) Login(ctx context.Context, email, password string) (*TokenPair
 	if err != nil {
 		return nil, fmt.Errorf("creating session: %w", err)
 	}
+	s.logAuthEvent(ctx, audit.ActionLoginSucceeded, user.ID, user.TheatreID, user.ID)
 
 	return tokens, nil
 }
@@ -401,10 +406,12 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokenPair,
 	if err != nil {
 		return nil, fmt.Errorf("generating access token: %w", err)
 	}
-	return &TokenPair{
+	pair := &TokenPair{
 		AccessToken: accessToken, RefreshToken: rotatedToken,
 		TokenType: "Bearer", ExpiresIn: int64(s.jwtConfig.TTL.Seconds()),
-	}, nil
+	}
+	s.logAuthEvent(ctx, audit.ActionSessionRefreshed, user.ID, user.TheatreID, session.ID)
+	return pair, nil
 }
 
 // Logout revokes the refresh-token family. Unknown tokens are ignored.
@@ -427,6 +434,7 @@ func (s *Service) Logout(ctx context.Context, refreshToken string) error {
 	if err := s.sessions.Update(ctx, session); err != nil {
 		return fmt.Errorf("revoking session: %w", err)
 	}
+	s.logAuthEvent(ctx, audit.ActionSessionRevoked, session.UserID, session.TheatreID, session.ID)
 	return nil
 }
 
@@ -438,6 +446,8 @@ func (s *Service) LogoutAll(ctx context.Context, userID string) error {
 	if err := s.sessions.RevokeAllByUser(ctx, userID, time.Now().UTC()); err != nil {
 		return fmt.Errorf("revoking user sessions: %w", err)
 	}
+	theatreID, _ := tenant.TheatreID(ctx)
+	s.logAuthEvent(ctx, audit.ActionAllSessionsRevoked, userID, theatreID, userID)
 	return nil
 }
 
@@ -466,6 +476,7 @@ func (s *Service) VerifyEmail(ctx context.Context, token string) (*TokenPair, er
 	if err := s.repo.UpdateUser(ctx, user); err != nil {
 		return nil, fmt.Errorf("marking email verified: %w", err)
 	}
+	s.logAuthEvent(ctx, audit.ActionEmailVerified, user.ID, user.TheatreID, user.ID)
 	return s.issueTokenPair(ctx, user)
 }
 
@@ -551,10 +562,12 @@ func (s *Service) CreateOfflineGrant(ctx context.Context, userID, deviceName str
 	if err != nil {
 		return nil, err
 	}
-	return &OfflineGrant{
+	grant := &OfflineGrant{
 		Token: token, ExpiresAt: expiresAt,
 		Device: DevicePublic{ID: device.ID, Name: device.Name, CreatedAt: device.CreatedAt},
-	}, nil
+	}
+	s.logAuthEvent(ctx, audit.ActionOfflineGrantIssued, user.ID, user.TheatreID, device.ID)
+	return grant, nil
 }
 
 // ListDevices returns devices belonging only to the authenticated user and theatre.
@@ -605,6 +618,7 @@ func (s *Service) RevokeDevice(ctx context.Context, userID, deviceID string) err
 	if err := s.devices.Update(ctx, device); err != nil {
 		return fmt.Errorf("revoking offline device: %w", err)
 	}
+	s.logAuthEvent(ctx, audit.ActionDeviceRevoked, userID, device.TheatreID, device.ID)
 	return nil
 }
 
@@ -614,6 +628,16 @@ func (s *Service) OfflineJWKS() map[string]interface{} {
 		return map[string]interface{}{"keys": []interface{}{}}
 	}
 	return s.offlineSigner.JWKS()
+}
+
+func (s *Service) logAuthEvent(ctx context.Context, action, authorID, theatreID, targetID string) {
+	if s.auditRepo == nil {
+		return
+	}
+	_ = s.auditRepo.Log(ctx, audit.AuditEntry{
+		ID: "audit::" + uuid.NewString(), Type: "audit", TheatreID: theatreID,
+		Action: action, AuthorID: authorID, TargetID: targetID, CreatedAt: time.Now().UTC(),
+	})
 }
 
 func (s *Service) generateAccessToken(user *User, sessionID string) (string, error) {

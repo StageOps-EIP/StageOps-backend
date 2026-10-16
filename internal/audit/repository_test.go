@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stageops/backend/internal/tenant"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -43,7 +44,7 @@ func TestCouchDBRepository_Log_WritesCorrectDocument(t *testing.T) {
 		CreatedAt:  time.Now().UTC().Truncate(time.Second),
 	}
 
-	err := repo.Log(context.Background(), entry)
+	err := repo.Log(tenant.WithTheatreID(context.Background(), "theatre::one"), entry)
 
 	assert.NoError(t, err)
 	assert.Equal(t, http.MethodPut, method)
@@ -55,6 +56,7 @@ func TestCouchDBRepository_Log_WritesCorrectDocument(t *testing.T) {
 	assert.Equal(t, entry.AuthorID, received.AuthorID)
 	assert.Equal(t, entry.AuthorRole, received.AuthorRole)
 	assert.Equal(t, entry.TargetID, received.TargetID)
+	assert.Equal(t, "theatre::one", received.TheatreID)
 }
 
 func TestCouchDBRepository_Log_CouchDBConflict(t *testing.T) {

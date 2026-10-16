@@ -323,6 +323,28 @@ func TestLoginCreatesRefreshSession(t *testing.T) {
 	sessions.AssertExpectations(t)
 }
 
+func TestLoginAuditsSuccessWithoutSensitivePayload(t *testing.T) {
+	repo := new(mockUserRepo)
+	audits := new(mockAuditRepo)
+	svc := NewService(repo, audits, "test-secret")
+	hash, err := hashPassword("SecurePass1!")
+	assert.NoError(t, err)
+	user := &User{
+		ID: "user::one", Type: "user", Email: "user@example.com", TheatreID: "theatre-default",
+		Role: RoleSon, AssignedModules: []string{RoleSon}, PasswordHash: hash,
+	}
+	repo.On("FindByEmail", mock.Anything, user.Email).Return(user, nil)
+	audits.On("Log", mock.Anything, mock.MatchedBy(func(entry audit.AuditEntry) bool {
+		return entry.Action == audit.ActionLoginSucceeded && entry.TargetID == user.ID &&
+			entry.TheatreID == user.TheatreID && len(entry.Payload) == 0
+	})).Return(nil)
+
+	_, err = svc.Login(context.Background(), user.Email, "SecurePass1!")
+
+	assert.NoError(t, err)
+	audits.AssertExpectations(t)
+}
+
 func TestRefreshRotatesToken(t *testing.T) {
 	repo := new(mockUserRepo)
 	sessions := new(mockSessionRepo)
