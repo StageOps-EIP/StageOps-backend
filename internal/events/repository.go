@@ -43,10 +43,6 @@ func (r *Repository) FindByID(ctx context.Context, id string) (*Event, error) {
 }
 
 func (r *Repository) Create(ctx context.Context, input *Input) (*Event, error) {
-	if err := validateInput(input); err != nil {
-		return nil, err
-	}
-
 	id := fmt.Sprintf("event::%s", uuid.New().String())
 	theatreID, err := tenant.RequireTheatreID(ctx)
 	if err != nil {
@@ -74,10 +70,6 @@ func (r *Repository) Create(ctx context.Context, input *Input) (*Event, error) {
 }
 
 func (r *Repository) Update(ctx context.Context, id string, input *Input) (*Event, error) {
-	if err := validateInput(input); err != nil {
-		return nil, err
-	}
-
 	current, err := r.findDocByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -127,17 +119,4 @@ func (r *Repository) findDocByID(ctx context.Context, id string) (*doc, error) {
 		return nil, ErrNotFound
 	}
 	return &current, nil
-}
-
-func validateInput(input *Input) error {
-	if input.Title == "" {
-		return &ValidationError{Message: "Le champ 'title' est requis."}
-	}
-	if input.Status != "" && !validStatuses[input.Status] {
-		return ErrInvalidStatus
-	}
-	if input.Status == "" {
-		input.Status = "planning"
-	}
-	return nil
 }
