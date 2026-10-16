@@ -400,6 +400,40 @@ func TestRefreshRejectsReplayAndRevokesSession(t *testing.T) {
 	sessions.AssertExpectations(t)
 }
 
+func TestRefreshRevokesLatestSessionAfterConcurrentRotation(t *testing.T) {
+	repo := new(mockUserRepo)
+	sessions := new(mockSessionRepo)
+	svc := newSessionService(repo, sessions)
+	sessionID := "session::44444444-4444-4444-8444-444444444444"
+	refreshToken, err := newSessionRefreshToken(sessionID)
+	assert.NoError(t, err)
+	initial := &Session{
+		ID: sessionID, Rev: "1-a", Type: "session", UserID: "user::one", TheatreID: "theatre-default",
+		RefreshTokenHash: hashRefreshToken(refreshToken), ExpiresAt: time.Now().Add(time.Hour),
+	}
+	latest := *initial
+	latest.Rev = "2-b"
+	latest.RefreshTokenHash = "winner-hash"
+	user := &User{
+		ID: initial.UserID, Email: "user@example.com", TheatreID: initial.TheatreID,
+		Role: RoleSon, AssignedModules: []string{RoleSon},
+	}
+	sessions.On("FindByID", mock.Anything, sessionID).Return(initial, nil).Once()
+	repo.On("FindByID", mock.Anything, user.ID).Return(user, nil)
+	sessions.On("Update", mock.Anything, mock.MatchedBy(func(session *Session) bool {
+		return session.Rev == "1-a" && session.RevokedAt == nil
+	})).Return(ErrInvalidRefresh).Once()
+	sessions.On("FindByID", mock.Anything, sessionID).Return(&latest, nil).Once()
+	sessions.On("Update", mock.Anything, mock.MatchedBy(func(session *Session) bool {
+		return session.Rev == "2-b" && session.RevokedAt != nil
+	})).Return(nil).Once()
+
+	_, err = svc.Refresh(context.Background(), refreshToken)
+
+	assert.ErrorIs(t, err, ErrInvalidRefresh)
+	sessions.AssertExpectations(t)
+}
+
 func TestSessionRefreshTokenCarriesOnlySessionIDAndRandomSecret(t *testing.T) {
 	sessionID := "session::33333333-3333-4333-8333-333333333333"
 	token, err := newSessionRefreshToken(sessionID)

@@ -24,6 +24,14 @@ import (
 // emailRegex validates email addresses following a practical RFC 5322 subset.
 var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
 
+var dummyPasswordHash = func() string {
+	hash, err := bcrypt.GenerateFromPassword([]byte("StageOps-Dummy-Password-1!"), 12)
+	if err != nil {
+		panic("creating dummy password hash: " + err.Error())
+	}
+	return string(hash)
+}()
+
 const (
 	// maxFailedAttempts is the number of wrong passwords before a lockout.
 	maxFailedAttempts = 5
@@ -295,6 +303,7 @@ func (s *Service) Login(ctx context.Context, email, password string) (*TokenPair
 	user, err := s.repo.FindByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
+			_ = comparePassword(dummyPasswordHash, password)
 			s.logAuthEvent(ctx, audit.ActionLoginFailed, "", s.registrationTheatre, emailDocumentID(email, s.userIDSecret))
 			return nil, ErrInvalidCredentials
 		}
@@ -404,6 +413,10 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokenPair,
 	session.RefreshTokenHash = hashRefreshToken(rotatedToken)
 	session.LastUsedAt = now
 	if err := s.sessions.Update(ctx, session); err != nil {
+		if errors.Is(err, ErrInvalidRefresh) {
+			s.revokeSessionAfterRotationConflict(ctx, session.ID, now)
+			return nil, ErrInvalidRefresh
+		}
 		return nil, fmt.Errorf("rotating session: %w", err)
 	}
 	accessToken, err := s.generateAccessToken(user, session.ID)
@@ -416,6 +429,15 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokenPair,
 	}
 	s.logAuthEvent(ctx, audit.ActionSessionRefreshed, user.ID, user.TheatreID, session.ID)
 	return pair, nil
+}
+
+func (s *Service) revokeSessionAfterRotationConflict(ctx context.Context, sessionID string, revokedAt time.Time) {
+	latest, err := s.sessions.FindByID(ctx, sessionID)
+	if err != nil || latest.RevokedAt != nil {
+		return
+	}
+	latest.RevokedAt = &revokedAt
+	_ = s.sessions.Update(ctx, latest)
 }
 
 // Logout revokes the refresh-token family. Unknown tokens are ignored.

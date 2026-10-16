@@ -26,3 +26,13 @@ func TestNewSMTPMailerAcceptsCompleteTLSConfiguration(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, mailer)
 }
+
+func TestNewSMTPMailerRejectsHeaderInjectionInSender(t *testing.T) {
+	_, err := NewSMTPMailer(SMTPConfig{
+		Host: "smtp.example.com", Port: 587,
+		From:            "noreply@example.com\r\nBcc: attacker@example.com",
+		VerificationURL: "https://stageops.example.com/verify-email",
+	})
+
+	require.Error(t, err)
+}

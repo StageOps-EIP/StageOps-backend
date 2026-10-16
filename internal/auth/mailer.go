@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"net/url"
 	"strconv"
@@ -37,6 +38,13 @@ func NewSMTPMailer(cfg SMTPConfig) (*SMTPMailer, error) {
 	if cfg.Host == "" || cfg.Port <= 0 || cfg.From == "" || cfg.VerificationURL == "" {
 		return nil, fmt.Errorf("incomplete SMTP configuration")
 	}
+	if strings.ContainsAny(cfg.Host+cfg.From+cfg.Username, "\r\n") {
+		return nil, fmt.Errorf("SMTP configuration contains forbidden newline characters")
+	}
+	fromAddress, err := mail.ParseAddress(cfg.From)
+	if err != nil || fromAddress.Address != cfg.From {
+		return nil, fmt.Errorf("SMTP sender must be a plain email address")
+	}
 	verificationURL, err := url.Parse(cfg.VerificationURL)
 	if err != nil || verificationURL.Scheme != "https" || verificationURL.Host == "" {
 		return nil, fmt.Errorf("verification URL must be an absolute HTTPS URL")
@@ -50,9 +58,7 @@ func (m *SMTPMailer) SendVerification(to, token string) error {
 	if err != nil {
 		return fmt.Errorf("parsing verification URL: %w", err)
 	}
-	query := verificationURL.Query()
-	query.Set("token", token)
-	verificationURL.RawQuery = query.Encode()
+	verificationURL.Fragment = "token=" + url.QueryEscape(token)
 	body := "Confirmez votre adresse email StageOps :\r\n\r\n" + verificationURL.String() +
 		"\r\n\r\nCe lien est temporaire. Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.\r\n"
 	message := strings.Join([]string{

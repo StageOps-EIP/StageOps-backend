@@ -33,7 +33,7 @@ sequenceDiagram
 - L'identifiant CouchDB d'un utilisateur est un HMAC de l'email avec `USER_ID_SECRET`; l'email n'apparaît pas dans `_id`.
 - Les access tokens HS256 durent 15 minutes et portent `iss`, `aud`, `sub`, `jti`, `token_type` et `theatre_id`.
 - Les refresh tokens durent 30 jours, sont aléatoires, rotatifs et stockés uniquement sous forme de hash SHA-256.
-- La réutilisation du refresh token précédent révoque sa famille de session.
+- La réutilisation de n'importe quel ancien refresh token révoque sa famille de session.
 - `logout` révoque une session; `logout-all` révoque toutes les sessions de l'utilisateur.
 - Le middleware relit la session et l'utilisateur dans CouchDB : une session révoquée ou un rôle modifié prend effet immédiatement.
 - Les tokens de vérification email sont à usage unique, hachés et valables 24 heures.
