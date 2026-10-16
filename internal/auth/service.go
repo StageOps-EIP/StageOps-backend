@@ -459,6 +459,11 @@ func (s *Service) Logout(ctx context.Context, refreshToken string) error {
 	if session.RevokedAt != nil {
 		return nil
 	}
+	providedHash := hashRefreshToken(refreshToken)
+	if !hmac.Equal([]byte(providedHash), []byte(session.RefreshTokenHash)) &&
+		!hmac.Equal([]byte(providedHash), []byte(session.PreviousRefreshHash)) {
+		return nil
+	}
 	now := time.Now().UTC()
 	session.RevokedAt = &now
 	if err := s.sessions.Update(ctx, session); err != nil {

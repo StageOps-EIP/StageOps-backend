@@ -448,6 +448,23 @@ func TestSessionRefreshTokenCarriesOnlySessionIDAndRandomSecret(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidRefresh)
 }
 
+func TestLogoutDoesNotRevokeSessionForForgedRefreshSecret(t *testing.T) {
+	repo := new(mockUserRepo)
+	sessions := new(mockSessionRepo)
+	svc := newSessionService(repo, sessions)
+	sessionID := "session::55555555-5555-4555-8555-555555555555"
+	forgedToken, err := newSessionRefreshToken(sessionID)
+	assert.NoError(t, err)
+	sessions.On("FindByID", mock.Anything, sessionID).Return(&Session{
+		ID: sessionID, Type: "session", RefreshTokenHash: "another-hash",
+	}, nil)
+
+	err = svc.Logout(context.Background(), forgedToken)
+
+	assert.NoError(t, err)
+	sessions.AssertNotCalled(t, "Update")
+}
+
 func TestCreateOfflineGrantScopesDeviceToAuthenticatedTheatre(t *testing.T) {
 	repo := new(mockUserRepo)
 	devices := new(mockDeviceRepo)
