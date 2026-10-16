@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stageops/backend/internal/audit"
+	"github.com/stageops/backend/internal/tenant"
 )
 
 // validModuleNames lists the module names accepted by the system.
@@ -65,6 +66,10 @@ func (s *Service) Toggle(ctx context.Context, name, authorID, authorRole string)
 	if !IsValidModuleName(name) {
 		return nil, ErrModuleNotFound
 	}
+	cacheKey, err := moduleCacheKey(ctx, name)
+	if err != nil {
+		return nil, err
+	}
 
 	mod, err := s.repo.Toggle(ctx, name)
 	if err != nil {
@@ -72,7 +77,7 @@ func (s *Service) Toggle(ctx context.Context, name, authorID, authorRole string)
 	}
 
 	// Invalidate cache so the next middleware check picks up the new state.
-	s.cache.Invalidate(name)
+	s.cache.Invalidate(cacheKey)
 
 	s.logModuleToggle(ctx, authorID, authorRole, name, mod.Active)
 
@@ -85,7 +90,11 @@ func (s *Service) Toggle(ctx context.Context, name, authorID, authorRole string)
 
 // IsActive checks whether a module is active, using the cache first.
 func (s *Service) IsActive(ctx context.Context, name string) (bool, error) {
-	if active, ok := s.cache.Get(name); ok {
+	cacheKey, err := moduleCacheKey(ctx, name)
+	if err != nil {
+		return false, err
+	}
+	if active, ok := s.cache.Get(cacheKey); ok {
 		return active, nil
 	}
 
@@ -94,8 +103,16 @@ func (s *Service) IsActive(ctx context.Context, name string) (bool, error) {
 		return false, err
 	}
 
-	s.cache.Set(name, mod.Active)
+	s.cache.Set(cacheKey, mod.Active)
 	return mod.Active, nil
+}
+
+func moduleCacheKey(ctx context.Context, name string) (string, error) {
+	theatreID, err := tenant.RequireTheatreID(ctx)
+	if err != nil {
+		return "", err
+	}
+	return theatreID + "::" + name, nil
 }
 
 // logModuleToggle writes a MODULE_TOGGLED audit entry. Failures are swallowed
@@ -116,12 +133,17 @@ func (s *Service) logModuleToggle(ctx context.Context, authorID, authorRole, mod
 		Action:     ActionModuleToggled,
 		AuthorID:   authorID,
 		AuthorRole: authorRole,
-		TargetID:   fmt.Sprintf("module::%s", moduleName),
+		TargetID:   fmt.Sprintf("module::%s::%s", theatreIDFromContext(ctx), moduleName),
 		Payload:    payload,
 		CreatedAt:  time.Now().UTC(),
 	}
 
 	_ = s.auditRepo.Log(ctx, entry)
+}
+
+func theatreIDFromContext(ctx context.Context) string {
+	theatreID, _ := tenant.TheatreID(ctx)
+	return theatreID
 }
 
 // ActionModuleToggled is the audit log action for module state changes.

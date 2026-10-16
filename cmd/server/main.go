@@ -132,10 +132,10 @@ func run() error {
 	app.Get("/.well-known/jwks.json", authHandler.JWKS)
 
 	moduleRepo := modules.NewCouchDBRepository(modules.CouchConfig{
-		BaseURL:  couchCfg.BaseURL,
-		DB:       couchCfg.DB,
-		Username: couchCfg.Username,
-		Password: couchCfg.Password,
+		BaseURL:  sharedCouchCfg.BaseURL,
+		DB:       sharedCouchCfg.DB,
+		Username: sharedCouchCfg.Username,
+		Password: sharedCouchCfg.Password,
 	})
 	moduleService := modules.NewService(moduleRepo, modules.NewCache(), auditRepo)
 	moduleHandler := modules.NewHandler(moduleService)

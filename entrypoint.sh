@@ -5,6 +5,7 @@ set -eu
 : "${COUCHDB_DB:?COUCHDB_DB is required}"
 : "${COUCHDB_USER:?COUCHDB_USER is required}"
 : "${COUCHDB_PASSWORD:?COUCHDB_PASSWORD is required}"
+: "${DEFAULT_THEATRE_ID:?DEFAULT_THEATRE_ID is required}"
 
 COUCH=${COUCHDB_URL%/}
 DATA_DB=$COUCHDB_DB
@@ -154,6 +155,43 @@ upsert_design "$DATA_DB" "projects" '{
     }
   }
 }'
+
+upsert_design "$DATA_DB" "modules" '{
+  "_id": "_design/modules",
+  "views": {
+    "by_theatre": {
+      "map": "function(doc) { if (doc.type === \"module\" && doc.theatre_id) emit(doc.theatre_id, null); }"
+    }
+  }
+}'
+
+ensure_module() {
+  name=$1
+  id="module::${DEFAULT_THEATRE_ID}::${name}"
+  encoded_id=$(printf '%s' "$id" | jq -sRr @uri)
+  url="$COUCH/$DATA_DB/$encoded_id"
+  status=$(curl --silent --output /dev/null --write-out '%{http_code}' --user "$AUTH" "$url")
+  case "$status" in
+    200)
+      ;;
+    404)
+      payload=$(jq -nc \
+        --arg id "$id" --arg theatre "$DEFAULT_THEATRE_ID" --arg name "$name" \
+        --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{_id: $id, type: "module", theatre_id: $theatre, name: $name, active: true, updated_at: $updated_at}')
+      curl --fail --silent --show-error --request PUT --user "$AUTH" \
+        --header "Content-Type: application/json" --data "$payload" "$url" >/dev/null
+      ;;
+    *)
+      echo "Unable to inspect module $name: HTTP $status" >&2
+      exit 1
+      ;;
+  esac
+}
+
+ensure_module "lumiere"
+ensure_module "son"
+ensure_module "plateau"
 
 echo "CouchDB is ready; starting StageOps backend."
 exec ./server
