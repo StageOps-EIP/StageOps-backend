@@ -69,7 +69,26 @@ jobs:
               --header 'Content-Type: application/json' \
               --data '{"email":"admin@example.com","password":"replace-with-Strong-Admin-Password-42!"}' \
               http://127.0.0.1:3000/api/auth/login
+          couch_url='http://127.0.0.1:15984'
+          couch_auth='stageops_admin:replace-with-at-least-32-random-characters'
+          curl --fail --silent --user "$couch_auth" --request PUT \
+            --header 'Content-Type: application/json' \
+            --data '{"_id":"user::legacy","type":"user","email":"legacy@example.com","password_hash":"legacy-hash","role":"son"}' \
+            "$couch_url/stageops/user::legacy" >/dev/null
+          curl --fail --silent --user "$couch_auth" --request PUT \
+            --header 'Content-Type: application/json' \
+            --data '{"_id":"module::son","type":"module","name":"son","active":false}' \
+            "$couch_url/stageops/module::son" >/dev/null
+          docker compose --env-file .env.production.example $compose_files run --rm --no-deps \
+            --entrypoint /app/migrate-theatre.sh backend --confirm
+          docker compose --env-file .env.production.example $compose_files run --rm --no-deps \
+            --entrypoint /app/migrate-theatre.sh backend --confirm
+          curl --fail --silent --user "$couch_auth" "$couch_url/stageops_auth/user::legacy" \
+            | jq -e '.email == "legacy@example.com" and .theatre_id == "replace-with-theatre-id"'
+          curl --fail --silent --user "$couch_auth" \
+            "$couch_url/stageops/module::replace-with-theatre-id::son" \
+            | jq -e '.active == false and .theatre_id == "replace-with-theatre-id"'
           COUCHDB_TEST_URL=http://127.0.0.1:15984 \
-          COUCHDB_TEST_USER=stageops \
+          COUCHDB_TEST_USER=stageops_admin \
           COUCHDB_TEST_PASSWORD=replace-with-at-least-32-random-characters \
             go test -race -tags=integration ./internal/auth
