@@ -220,7 +220,7 @@ func (s *Service) Register(ctx context.Context, email, password string) (*TokenP
 	}
 	s.logAuthEvent(ctx, audit.ActionUserRegistered, user.ID, user.TheatreID, user.ID)
 	if s.requireVerification {
-		if err := s.mailer.SendVerification(user.Email, verificationToken); err != nil {
+		if err := s.mailer.SendVerification(ctx, user.Email, verificationToken); err != nil {
 			return nil, fmt.Errorf("sending verification email: %w", err)
 		}
 		return nil, nil
@@ -546,7 +546,7 @@ func (s *Service) ResendVerification(ctx context.Context, email string) error {
 	if err := s.repo.UpdateUser(ctx, user); err != nil {
 		return fmt.Errorf("updating email verification: %w", err)
 	}
-	if err := s.mailer.SendVerification(user.Email, token); err != nil {
+	if err := s.mailer.SendVerification(ctx, user.Email, token); err != nil {
 		return fmt.Errorf("sending verification email: %w", err)
 	}
 	return nil

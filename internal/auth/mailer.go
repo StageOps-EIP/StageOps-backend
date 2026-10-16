@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -10,11 +11,14 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
+
+const defaultSMTPTimeout = 10 * time.Second
 
 // VerificationMailer delivers one-time email verification links.
 type VerificationMailer interface {
-	SendVerification(to, token string) error
+	SendVerification(ctx context.Context, to, token string) error
 }
 
 // SMTPConfig contains the SMTP connection and public verification URL.
@@ -26,6 +30,7 @@ type SMTPConfig struct {
 	From            string
 	VerificationURL string
 	ImplicitTLS     bool
+	Timeout         time.Duration
 }
 
 // SMTPMailer sends verification emails over mandatory TLS.
@@ -49,11 +54,14 @@ func NewSMTPMailer(cfg SMTPConfig) (*SMTPMailer, error) {
 	if err != nil || verificationURL.Scheme != "https" || verificationURL.Host == "" {
 		return nil, fmt.Errorf("verification URL must be an absolute HTTPS URL")
 	}
+	if cfg.Timeout <= 0 {
+		cfg.Timeout = defaultSMTPTimeout
+	}
 	return &SMTPMailer{cfg: cfg}, nil
 }
 
 // SendVerification sends a minimal plain-text message without logging secrets.
-func (m *SMTPMailer) SendVerification(to, token string) error {
+func (m *SMTPMailer) SendVerification(ctx context.Context, to, token string) error {
 	verificationURL, err := url.Parse(m.cfg.VerificationURL)
 	if err != nil {
 		return fmt.Errorf("parsing verification URL: %w", err)
@@ -70,28 +78,43 @@ func (m *SMTPMailer) SendVerification(to, token string) error {
 		"",
 		body,
 	}, "\r\n")
-	return m.send(to, strings.NewReader(message))
+	return m.send(ctx, to, strings.NewReader(message))
 }
 
-func (m *SMTPMailer) send(to string, message io.Reader) error {
+func (m *SMTPMailer) send(ctx context.Context, to string, message io.Reader) error {
 	address := net.JoinHostPort(m.cfg.Host, strconv.Itoa(m.cfg.Port))
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: m.cfg.Host}
+	dialer := &net.Dialer{Timeout: m.cfg.Timeout}
+	connection, err := dialer.DialContext(ctx, "tcp", address)
+	if err != nil {
+		return fmt.Errorf("connecting to SMTP: %w", err)
+	}
+	deadline := time.Now().Add(m.cfg.Timeout)
+	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
+		deadline = contextDeadline
+	}
+	if err := connection.SetDeadline(deadline); err != nil {
+		_ = connection.Close()
+		return fmt.Errorf("setting SMTP connection deadline: %w", err)
+	}
+
 	var client *smtp.Client
 	if m.cfg.ImplicitTLS {
-		connection, err := tls.Dial("tcp", address, tlsConfig)
-		if err != nil {
-			return fmt.Errorf("connecting to SMTP over TLS: %w", err)
+		tlsConnection := tls.Client(connection, tlsConfig)
+		if err := tlsConnection.HandshakeContext(ctx); err != nil {
+			_ = connection.Close()
+			return fmt.Errorf("starting implicit SMTP TLS: %w", err)
 		}
-		client, err = smtp.NewClient(connection, m.cfg.Host)
+		client, err = smtp.NewClient(tlsConnection, m.cfg.Host)
 		if err != nil {
 			_ = connection.Close()
 			return fmt.Errorf("creating SMTP client: %w", err)
 		}
 	} else {
-		var err error
-		client, err = smtp.Dial(address)
+		client, err = smtp.NewClient(connection, m.cfg.Host)
 		if err != nil {
-			return fmt.Errorf("connecting to SMTP: %w", err)
+			_ = connection.Close()
+			return fmt.Errorf("creating SMTP client: %w", err)
 		}
 		if ok, _ := client.Extension("STARTTLS"); !ok {
 			_ = client.Close()

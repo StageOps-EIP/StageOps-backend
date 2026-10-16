@@ -144,8 +144,8 @@ type mockVerificationMailer struct {
 	mock.Mock
 }
 
-func (m *mockVerificationMailer) SendVerification(to, token string) error {
-	return m.Called(to, token).Error(0)
+func (m *mockVerificationMailer) SendVerification(ctx context.Context, to, token string) error {
+	return m.Called(ctx, to, token).Error(0)
 }
 
 func (m *mockAuditRepo) Log(ctx context.Context, entry audit.AuditEntry) error {
@@ -243,7 +243,7 @@ func TestRegisterRequiresEmailVerificationWhenEnabled(t *testing.T) {
 		return user.EmailVerificationRequired && user.EmailVerifiedAt == nil &&
 			user.VerificationTokenHash != "" && user.VerificationExpiresAt != nil
 	})).Return(nil)
-	mailer.On("SendVerification", "user@example.com", mock.MatchedBy(func(token string) bool {
+	mailer.On("SendVerification", mock.Anything, "user@example.com", mock.MatchedBy(func(token string) bool {
 		return len(token) >= 32 && token != hashRefreshToken(token)
 	})).Return(nil)
 
