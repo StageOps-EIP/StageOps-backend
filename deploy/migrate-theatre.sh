@@ -16,12 +16,18 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config --quiet
+
+echo "Building the migration image without replacing the running services..."
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --pull couchdb backend
+
 echo "Creating a CouchDB backup before tenant migration..."
-ENV_FILE="$ENV_FILE" sh "$ROOT_DIR/deploy/backup.sh"
+RESTART_SERVICES=false ENV_FILE="$ENV_FILE" sh "$ROOT_DIR/deploy/backup.sh"
 
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --wait couchdb
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" run --rm \
   --no-deps --entrypoint /app/migrate-theatre.sh backend --confirm
 
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" restart backend
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
 echo "Tenant migration completed."
