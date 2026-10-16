@@ -55,7 +55,7 @@ sh ./deploy/migrate-theatre.sh --confirm
 
 Le script construit d'abord les nouvelles images sans remplacer les services en cours. Il arrête ensuite le backend et CouchDB, crée une sauvegarde cohérente en les laissant arrêtés, puis démarre uniquement CouchDB pour migrer les données. Le backend n'est remis en service qu'après la réussite complète de la migration.
 
-La migration copie les anciens comptes du stockage opérationnel vers la base d'authentification dédiée, conserve l'état des anciens modules sous leurs nouveaux identifiants par théâtre et complète les `theatre_id` manquants. Elle est idempotente et refuse d'écraser deux utilisateurs de même identifiant dont les données d'authentification diffèrent.
+La migration copie les anciens comptes du stockage opérationnel vers la base d'authentification dédiée, conserve l'état des anciens modules sous leurs nouveaux identifiants par théâtre et complète les `theatre_id` manquants. Elle est idempotente et refuse les conflits d'identifiant ou d'email normalisé entre comptes historiques et comptes déjà migrés.
 
 Vérifier `DEFAULT_THEATRE_ID` avant de confirmer : l'opération ne peut pas deviner le théâtre d'origine d'un document historique. En cas d'échec, le backend reste arrêté afin d'éviter de servir un schéma partiellement migré ; corriger la cause ou restaurer la sauvegarde annoncée par le script avant de relancer.
 

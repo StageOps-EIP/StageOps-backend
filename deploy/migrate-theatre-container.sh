@@ -74,15 +74,36 @@ copy_legacy_users() {
   conflicts=$(jq -n \
     --slurpfile source "$source_file" \
     --slurpfile destination "$destination_file" '
+      def normalized_email:
+        (. // "" | tostring | ascii_downcase | gsub("^\\s+|\\s+$"; ""));
       ($destination[0].rows | map({key: .id, value: .doc}) | from_entries) as $existing
+      | (
+          reduce (
+            $destination[0].rows[].doc
+            | select((._deleted // false) == false and .type == "user")
+          ) as $destination_user (
+            {};
+            ($destination_user.email | normalized_email) as $email
+            | .[$email] = ((.[$email] // []) + [$destination_user._id])
+          )
+        ) as $ids_by_email
       | [
           $source[0].rows[].doc
           | select((._deleted // false) == false and .type == "user")
           | . as $source_user
-          | select($existing[$source_user._id] != null)
           | select(
-              $existing[$source_user._id].email != $source_user.email
-              or $existing[$source_user._id].password_hash != $source_user.password_hash
+              (
+                $existing[$source_user._id] != null
+                and (
+                  ($existing[$source_user._id].email | normalized_email) != ($source_user.email | normalized_email)
+                  or $existing[$source_user._id].password_hash != $source_user.password_hash
+                )
+              )
+              or (
+                ($ids_by_email[($source_user.email | normalized_email)] // [])
+                | map(select(. != $source_user._id))
+                | length
+              ) > 0
             )
         ]
       | length
@@ -97,12 +118,15 @@ copy_legacy_users() {
     --arg theatre "$DEFAULT_THEATRE_ID" \
     --slurpfile source "$source_file" \
     --slurpfile destination "$destination_file" '
+      def normalized_email:
+        (. // "" | tostring | ascii_downcase | gsub("^\\s+|\\s+$"; ""));
       ($destination[0].rows | map({key: .id, value: .doc}) | from_entries) as $existing
       | [
           $source[0].rows[].doc
           | select((._deleted // false) == false and .type == "user")
           | select($existing[._id] == null)
           | del(._rev)
+          | .email = (.email | normalized_email)
           | .theatre_id = if (.theatre_id // "") == "" then $theatre else .theatre_id end
         ]
     ' >"$docs_file"
@@ -123,10 +147,22 @@ copy_legacy_modules() {
         | select((.theatre_id // "") == "")
         | . as $legacy
         | ("module::" + $theatre + "::" + $legacy.name) as $new_id
-        | select($existing[$new_id] == null)
-        | del(._rev)
-        | ._id = $new_id
-        | .theatre_id = $theatre
+        | ($existing[$new_id] // null) as $target
+        | (
+            $legacy
+            | del(._rev)
+            | ._id = $new_id
+            | .theatre_id = $theatre
+            | .updated_at = if ($legacy.updated_at // "") != "" then
+                $legacy.updated_at
+              elif ($target.updated_at // "") != "" then
+                $target.updated_at
+              else
+                (now | todateiso8601)
+              end
+          ) as $desired
+        | select($target == null or (($target | del(._rev)) != $desired))
+        | if $target == null then $desired else $desired + {_rev: $target._rev} end
       ]
   ' "$source_file" >"$docs_file"
 
