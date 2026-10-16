@@ -59,37 +59,83 @@ func run() error {
 
 	couchCfg := auth.CouchConfig{
 		BaseURL:  mustEnv("COUCHDB_URL"),
-		DB:       mustEnv("COUCHDB_DB"),
+		DB:       envOr("COUCHDB_AUTH_DB", "stageops_auth"),
 		Username: mustEnv("COUCHDB_USER"),
 		Password: mustEnv("COUCHDB_PASSWORD"),
 	}
 	sharedCouchCfg := couch.Config{
 		BaseURL:  couchCfg.BaseURL,
-		DB:       couchCfg.DB,
+		DB:       mustEnv("COUCHDB_DB"),
 		Username: couchCfg.Username,
 		Password: couchCfg.Password,
 	}
 
 	authRepo := auth.NewCouchDBRepository(couchCfg)
-	auditRepo := audit.NewCouchDBRepository(audit.CouchConfig{
+	sessionRepo := auth.NewCouchDBSessionRepository(couchCfg)
+	deviceRepo := auth.NewCouchDBDeviceRepository(couchCfg)
+	authAuditRepo := audit.NewCouchDBRepository(audit.CouchConfig{
 		BaseURL:  couchCfg.BaseURL,
 		DB:       couchCfg.DB,
 		Username: couchCfg.Username,
 		Password: couchCfg.Password,
 	})
+	auditRepo := audit.NewCouchDBRepository(audit.CouchConfig{
+		BaseURL:  sharedCouchCfg.BaseURL,
+		DB:       sharedCouchCfg.DB,
+		Username: sharedCouchCfg.Username,
+		Password: sharedCouchCfg.Password,
+	})
 	jwtSecret := mustSecret("JWT_SECRET", 32)
-	authService := auth.NewService(authRepo, auditRepo, jwtSecret)
+	jwtConfig := auth.JWTConfig{
+		Secret: jwtSecret, Issuer: envOr("JWT_ISSUER", "stageops-api"),
+		Audience: envOr("JWT_AUDIENCE", "stageops-clients"), TTL: 15 * time.Minute,
+	}
+	offlineSigner, err := auth.NewOfflineSigner(auth.OfflineSignerConfig{
+		PrivateKeyBase64: mustEnv("OFFLINE_SIGNING_KEY"),
+		KeyID:            envOr("OFFLINE_KEY_ID", "offline-2026-01"),
+		Issuer:           envOr("JWT_ISSUER", "stageops-api"), Audience: envOr("OFFLINE_AUDIENCE", "stageops-offline"),
+		TTL: 7 * 24 * time.Hour,
+	})
+	if err != nil {
+		return fmt.Errorf("configuring offline grants: %w", err)
+	}
+	requireEmailVerification := envBool("AUTH_REQUIRE_EMAIL_VERIFICATION", true)
+	var verificationMailer auth.VerificationMailer
+	if requireEmailVerification {
+		smtpPort, err := strconv.Atoi(mustEnv("SMTP_PORT"))
+		if err != nil || smtpPort <= 0 {
+			return fmt.Errorf("SMTP_PORT must be a positive integer")
+		}
+		verificationMailer, err = auth.NewSMTPMailer(auth.SMTPConfig{
+			Host: mustEnv("SMTP_HOST"), Port: smtpPort,
+			Username: os.Getenv("SMTP_USERNAME"), Password: os.Getenv("SMTP_PASSWORD"),
+			From: mustEnv("SMTP_FROM"), VerificationURL: mustEnv("AUTH_VERIFICATION_URL"),
+			ImplicitTLS: envBool("SMTP_IMPLICIT_TLS", false),
+		})
+		if err != nil {
+			return fmt.Errorf("configuring verification email: %w", err)
+		}
+	}
+	authService := auth.NewServiceWithConfig(authRepo, authAuditRepo, auth.ServiceConfig{
+		JWT: jwtConfig, UserIDSecret: mustSecret("USER_ID_SECRET", 32),
+		RegistrationTheatreID: mustEnv("DEFAULT_THEATRE_ID"),
+		SessionRepository:     sessionRepo, RefreshTTL: 30 * 24 * time.Hour,
+		Mailer: verificationMailer, RequireEmailVerification: requireEmailVerification,
+		EmailVerificationTTL: 24 * time.Hour,
+		DeviceRepository:     deviceRepo, OfflineSigner: offlineSigner,
+	})
 	if err := bootstrapAdminFromEnv(authService); err != nil {
 		return err
 	}
 	authHandler := auth.NewHandler(authService)
-	authenticate := auth.JWTMiddleware(jwtSecret, authRepo)
+	authenticate := auth.JWTMiddlewareWithSession(jwtConfig, authRepo, sessionRepo)
+	app.Get("/.well-known/jwks.json", authHandler.JWKS)
 
 	moduleRepo := modules.NewCouchDBRepository(modules.CouchConfig{
-		BaseURL:  couchCfg.BaseURL,
-		DB:       couchCfg.DB,
-		Username: couchCfg.Username,
-		Password: couchCfg.Password,
+		BaseURL:  sharedCouchCfg.BaseURL,
+		DB:       sharedCouchCfg.DB,
+		Username: sharedCouchCfg.Username,
+		Password: sharedCouchCfg.Password,
 	})
 	moduleService := modules.NewService(moduleRepo, modules.NewCache(), auditRepo)
 	moduleHandler := modules.NewHandler(moduleService)
@@ -97,9 +143,9 @@ func run() error {
 	projectHandler := projects.NewHandler(projectService)
 
 	equipmentHandler := equipment.NewHandler(equipment.NewService(equipment.NewRepository(sharedCouchCfg), auditRepo))
-	eventsHandler := events.NewHandler(events.NewRepository(sharedCouchCfg))
+	eventsHandler := events.NewHandler(events.NewService(events.NewRepository(sharedCouchCfg)))
 	incidentsHandler := incidents.NewHandler(incidents.NewService(incidents.NewRepository(sharedCouchCfg), auditRepo))
-	teamHandler := team.NewHandler(team.NewRepository(sharedCouchCfg))
+	teamHandler := team.NewHandler(team.NewService(team.NewRepository(sharedCouchCfg)))
 
 	rateLimitResponse := func(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
@@ -136,7 +182,15 @@ func run() error {
 		authGroup.Post("/register", registerLimiter, authHandler.Register)
 	}
 	authGroup.Post("/login", loginLimiter, authHandler.Login)
+	authGroup.Post("/refresh", loginLimiter, authHandler.Refresh)
+	authGroup.Post("/logout", authHandler.Logout)
+	authGroup.Post("/verify-email", loginLimiter, authHandler.VerifyEmail)
+	authGroup.Post("/resend-verification", loginLimiter, authHandler.ResendVerification)
 	authGroup.Get("/me", authenticate, authHandler.Me)
+	authGroup.Post("/logout-all", authenticate, authHandler.LogoutAll)
+	authGroup.Get("/devices", authenticate, authHandler.ListDevices)
+	authGroup.Post("/offline-grants", authenticate, authHandler.CreateOfflineGrant)
+	authGroup.Delete("/devices/:id", authenticate, authHandler.RevokeDevice)
 
 	usersGroup := api.Group("/users", authenticate)
 	usersGroup.Patch("/:id/role", auth.RequireRole(auth.RoleRG), authHandler.UpdateUserRole)

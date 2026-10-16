@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stageops/backend/internal/audit"
+	"github.com/stageops/backend/internal/tenant"
 )
 
 type IncidentService interface {
@@ -61,8 +62,13 @@ func (s *Service) Create(ctx context.Context, projectID, module string, input In
 		input.Status = "open"
 	}
 	now := time.Now().UTC()
+	theatreID, err := tenant.RequireTheatreID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	incident := &doc{
 		ID: fmt.Sprintf("incident::%s", uuid.NewString()), Type: docType,
+		TheatreID: theatreID,
 		ProjectID: projectID, Module: module, Title: strings.TrimSpace(input.Title),
 		Description: input.Description, Severity: input.Severity, Status: input.Status,
 		EquipmentID: input.EquipmentID, ReportedBy: authorID, ResolvedAt: input.ResolvedAt,

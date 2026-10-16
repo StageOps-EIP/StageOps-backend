@@ -14,6 +14,7 @@ type Project struct {
 	ID            string        `json:"_id"`
 	Rev           string        `json:"_rev,omitempty"`
 	Type          string        `json:"type"`
+	TheatreID     string        `json:"theatre_id"`
 	Name          string        `json:"name"`
 	Venue         string        `json:"venue"`
 	StartDate     string        `json:"start_date"`
@@ -26,6 +27,7 @@ type Project struct {
 // PublicProject is returned by the HTTP API without CouchDB metadata.
 type PublicProject struct {
 	ID            string        `json:"id"`
+	TheatreID     string        `json:"theatre_id"`
 	Name          string        `json:"name"`
 	Venue         string        `json:"venue"`
 	StartDate     string        `json:"start_date"`
@@ -56,6 +58,7 @@ type UpdateInput struct {
 func toPublic(project *Project) *PublicProject {
 	return &PublicProject{
 		ID:            project.ID,
+		TheatreID:     project.TheatreID,
 		Name:          project.Name,
 		Venue:         project.Venue,
 		StartDate:     project.StartDate,

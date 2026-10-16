@@ -11,6 +11,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 type projectModuleCheckerMock struct {
@@ -166,6 +168,7 @@ func TestJWTMiddlewareUsesCurrentServerSideRole(t *testing.T) {
 		JWTMiddleware(secret, userAccessReaderStub{user: &User{
 			ID:              "user::abc",
 			Email:           "user@example.com",
+			TheatreID:       "theatre-default",
 			Role:            RoleSon,
 			AssignedModules: []string{RoleSon},
 		}}),
@@ -178,6 +181,79 @@ func TestJWTMiddlewareUsesCurrentServerSideRole(t *testing.T) {
 	response, err := app.Test(req)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusForbidden, response.StatusCode)
+}
+
+func TestJWTMiddlewareRejectsRevokedSession(t *testing.T) {
+	cfg := JWTConfig{Secret: "test-secret", Issuer: "issuer", Audience: "audience", TTL: 15 * time.Minute}
+	token, err := generateAccessToken(
+		"user::abc", "user@example.com", RoleSon, "theatre-default", []string{RoleSon},
+		"session::one", cfg, time.Now().UTC(),
+	)
+	require.NoError(t, err)
+	revokedAt := time.Now().UTC()
+	sessions := new(mockSessionRepo)
+	sessions.On("FindByID", mock.Anything, "session::one").Return(&Session{
+		ID: "session::one", Type: "session", UserID: "user::abc", TheatreID: "theatre-default",
+		ExpiresAt: time.Now().Add(time.Hour), RevokedAt: &revokedAt,
+	}, nil)
+	app := fiber.New()
+	app.Get("/protected", JWTMiddlewareWithSession(cfg, nil, sessions), func(c *fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := app.Test(req)
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	sessions.AssertExpectations(t)
+}
+
+func TestJWTMiddlewareReportsSessionStoreOutage(t *testing.T) {
+	cfg := JWTConfig{Secret: "test-secret", Issuer: "issuer", Audience: "audience", TTL: 15 * time.Minute}
+	token, err := generateAccessToken(
+		"user::abc", "user@example.com", RoleSon, "theatre-default", []string{RoleSon},
+		"session::one", cfg, time.Now().UTC(),
+	)
+	require.NoError(t, err)
+	sessions := new(mockSessionRepo)
+	sessions.On("FindByID", mock.Anything, "session::one").Return(nil, errors.New("couchdb unavailable"))
+	app := fiber.New()
+	app.Get("/protected", JWTMiddlewareWithSession(cfg, nil, sessions), func(c *fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := app.Test(req)
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	sessions.AssertExpectations(t)
+}
+
+func TestJWTMiddlewareRejectsMissingSession(t *testing.T) {
+	cfg := JWTConfig{Secret: "test-secret", Issuer: "issuer", Audience: "audience", TTL: 15 * time.Minute}
+	token, err := generateAccessToken(
+		"user::abc", "user@example.com", RoleSon, "theatre-default", []string{RoleSon},
+		"session::one", cfg, time.Now().UTC(),
+	)
+	require.NoError(t, err)
+	sessions := new(mockSessionRepo)
+	sessions.On("FindByID", mock.Anything, "session::one").Return(nil, ErrSessionNotFound)
+	app := fiber.New()
+	app.Get("/protected", JWTMiddlewareWithSession(cfg, nil, sessions), func(c *fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := app.Test(req)
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	sessions.AssertExpectations(t)
 }
 
 // --- RequireRole ---

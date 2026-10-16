@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stageops/backend/internal/tenant"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -69,7 +70,7 @@ func TestServiceCreateLightingEquipment(t *testing.T) {
 	repo := &repositoryMock{}
 	universe, address := 1, 100
 
-	item, err := NewService(repo, nil).Create(context.Background(), "project::1", "lighting", Input{
+	item, err := NewService(repo, nil).Create(tenant.WithTheatreID(context.Background(), "theatre::one"), "project::1", "lighting", Input{
 		Name: "Spot 1", Kind: "moving-head", DMXUniverse: &universe, DMXAddress: &address, DMXChannels: 16,
 	}, "user::1", "lumiere")
 

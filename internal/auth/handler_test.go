@@ -20,14 +20,82 @@ type mockAuthService struct {
 	mock.Mock
 }
 
-func (m *mockAuthService) Register(ctx context.Context, email, password string) (string, error) {
+func (m *mockAuthService) Register(ctx context.Context, email, password string) (*TokenPair, error) {
 	args := m.Called(ctx, email, password)
-	return args.String(0), args.Error(1)
+	if value, ok := args.Get(0).(*TokenPair); ok {
+		return value, args.Error(1)
+	}
+	if value, ok := args.Get(0).(string); ok && value != "" {
+		return &TokenPair{AccessToken: value, TokenType: "Bearer"}, args.Error(1)
+	}
+	return nil, args.Error(1)
 }
 
-func (m *mockAuthService) Login(ctx context.Context, email, password string) (string, error) {
+func (m *mockAuthService) Login(ctx context.Context, email, password string) (*TokenPair, error) {
 	args := m.Called(ctx, email, password)
-	return args.String(0), args.Error(1)
+	if value, ok := args.Get(0).(*TokenPair); ok {
+		return value, args.Error(1)
+	}
+	if value, ok := args.Get(0).(string); ok && value != "" {
+		return &TokenPair{AccessToken: value, TokenType: "Bearer"}, args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
+func (m *mockAuthService) Refresh(ctx context.Context, refreshToken string) (*TokenPair, error) {
+	args := m.Called(ctx, refreshToken)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*TokenPair), args.Error(1)
+}
+
+func (m *mockAuthService) Logout(ctx context.Context, refreshToken string) error {
+	return m.Called(ctx, refreshToken).Error(0)
+}
+
+func (m *mockAuthService) LogoutAll(ctx context.Context, userID string) error {
+	return m.Called(ctx, userID).Error(0)
+}
+
+func (m *mockAuthService) VerifyEmail(ctx context.Context, token string) (*TokenPair, error) {
+	args := m.Called(ctx, token)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*TokenPair), args.Error(1)
+}
+
+func (m *mockAuthService) ResendVerification(ctx context.Context, email string) error {
+	return m.Called(ctx, email).Error(0)
+}
+
+func (m *mockAuthService) CreateOfflineGrant(ctx context.Context, userID, deviceName string) (*OfflineGrant, error) {
+	args := m.Called(ctx, userID, deviceName)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*OfflineGrant), args.Error(1)
+}
+
+func (m *mockAuthService) ListDevices(ctx context.Context, userID string) ([]DevicePublic, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]DevicePublic), args.Error(1)
+}
+
+func (m *mockAuthService) RevokeDevice(ctx context.Context, userID, deviceID string) error {
+	return m.Called(ctx, userID, deviceID).Error(0)
+}
+
+func (m *mockAuthService) OfflineJWKS() map[string]interface{} {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return map[string]interface{}{"keys": []interface{}{}}
+	}
+	return args.Get(0).(map[string]interface{})
 }
 
 func (m *mockAuthService) GetUser(ctx context.Context, id string) (*UserPublic, error) {
@@ -62,11 +130,20 @@ func newTestApp(svc AuthService, jwtSecret string) *fiber.App {
 	}})
 
 	h := NewHandler(svc)
+	app.Get("/.well-known/jwks.json", h.JWKS)
 	api := app.Group("/api")
 	authGroup := api.Group("/auth")
 	authGroup.Post("/register", h.Register)
 	authGroup.Post("/login", h.Login)
+	authGroup.Post("/refresh", h.Refresh)
+	authGroup.Post("/logout", h.Logout)
+	authGroup.Post("/verify-email", h.VerifyEmail)
+	authGroup.Post("/resend-verification", h.ResendVerification)
+	authGroup.Get("/devices", JWTMiddleware(jwtSecret), h.ListDevices)
+	authGroup.Post("/offline-grants", JWTMiddleware(jwtSecret), h.CreateOfflineGrant)
+	authGroup.Delete("/devices/:id", JWTMiddleware(jwtSecret), h.RevokeDevice)
 	authGroup.Get("/me", JWTMiddleware(jwtSecret), h.Me)
+	authGroup.Post("/logout-all", JWTMiddleware(jwtSecret), h.LogoutAll)
 
 	usersGroup := api.Group("/users", JWTMiddleware(jwtSecret))
 	usersGroup.Patch("/:id/role", RequireRole(RoleRG), h.UpdateUserRole)
@@ -135,7 +212,7 @@ func TestRegisterHandler_Success(t *testing.T) {
 
 	var result map[string]string
 	json.NewDecoder(resp.Body).Decode(&result)
-	assert.Equal(t, "jwt.token.here", result["token"])
+	assert.Equal(t, "jwt.token.here", result["access_token"])
 	svc.AssertExpectations(t)
 }
 
@@ -162,7 +239,7 @@ func TestRegisterHandler_ValidationError(t *testing.T) {
 	app := newTestApp(svc, "test-secret")
 
 	svc.On("Register", mock.Anything, "bad-email", "weak").
-		Return("", &ValidationError{Message: "Format d'email invalide."})
+		Return("", &ValidationError{Message: "Format d'email invalide.", Fields: map[string]string{"email": "Adresse email invalide."}})
 
 	resp := postJSON(app, "/api/auth/register", map[string]string{
 		"email":    "bad-email",
@@ -173,7 +250,36 @@ func TestRegisterHandler_ValidationError(t *testing.T) {
 	errObj := decodeError(resp)
 	assert.Equal(t, "VALIDATION_ERROR", errObj["code"])
 	assert.Equal(t, "Format d'email invalide.", errObj["message"])
+	fields := errObj["fields"].(map[string]interface{})
+	assert.Equal(t, "Adresse email invalide.", fields["email"])
 	svc.AssertExpectations(t)
+}
+
+func TestRegisterHandler_RejectsUnknownJSONFields(t *testing.T) {
+	svc := new(mockAuthService)
+	app := newTestApp(svc, "test-secret")
+
+	resp := postJSON(app, "/api/auth/register", map[string]string{
+		"email": "user@example.com", "password": "SecurePass1!", "admin": "true",
+	})
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	svc.AssertNotCalled(t, "Register")
+}
+
+func TestRegisterHandler_ReturnsVerificationRequired(t *testing.T) {
+	svc := new(mockAuthService)
+	app := newTestApp(svc, "test-secret")
+	svc.On("Register", mock.Anything, "user@example.com", "SecurePass1!").Return(nil, nil)
+
+	resp := postJSON(app, "/api/auth/register", map[string]string{
+		"email": "user@example.com", "password": "SecurePass1!",
+	})
+
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+	var result map[string]string
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, "verification_required", result["status"])
 }
 
 // --- Login ---
@@ -194,7 +300,7 @@ func TestLoginHandler_Success(t *testing.T) {
 
 	var result map[string]string
 	json.NewDecoder(resp.Body).Decode(&result)
-	assert.Equal(t, "jwt.token.here", result["token"])
+	assert.Equal(t, "jwt.token.here", result["access_token"])
 	svc.AssertExpectations(t)
 }
 
@@ -248,6 +354,80 @@ func TestLoginHandler_UnknownEmail(t *testing.T) {
 	})
 
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	svc.AssertExpectations(t)
+}
+
+func TestRefreshHandler_RotatesTokens(t *testing.T) {
+	svc := new(mockAuthService)
+	app := newTestApp(svc, "test-secret")
+	expected := &TokenPair{
+		AccessToken: "new-access", RefreshToken: "new-refresh",
+		TokenType: "Bearer", ExpiresIn: 900,
+	}
+	svc.On("Refresh", mock.Anything, "old-refresh").Return(expected, nil)
+
+	resp := postJSON(app, "/api/auth/refresh", map[string]string{"refresh_token": "old-refresh"})
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	var result TokenPair
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, expected, &result)
+	svc.AssertExpectations(t)
+}
+
+func TestRefreshHandler_InvalidToken(t *testing.T) {
+	svc := new(mockAuthService)
+	app := newTestApp(svc, "test-secret")
+	svc.On("Refresh", mock.Anything, "invalid-refresh").Return(nil, ErrInvalidRefresh)
+
+	resp := postJSON(app, "/api/auth/refresh", map[string]string{"refresh_token": "invalid-refresh"})
+
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	errObj := decodeError(resp)
+	assert.Equal(t, "INVALID_REFRESH_TOKEN", errObj["code"])
+}
+
+func TestLogoutHandler_RevokesSession(t *testing.T) {
+	svc := new(mockAuthService)
+	app := newTestApp(svc, "test-secret")
+	svc.On("Logout", mock.Anything, "refresh-token").Return(nil)
+
+	resp := postJSON(app, "/api/auth/logout", map[string]string{"refresh_token": "refresh-token"})
+
+	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
+	svc.AssertExpectations(t)
+}
+
+func TestCreateOfflineGrantHandler_Success(t *testing.T) {
+	svc := new(mockAuthService)
+	app := newTestApp(svc, "test-secret")
+	expected := &OfflineGrant{Token: "offline-token", Device: DevicePublic{ID: "device::one", Name: "Console"}}
+	svc.On("CreateOfflineGrant", mock.Anything, "user::one", "Console").Return(expected, nil)
+	token, err := generateToken("user::one", "user@example.com", RoleSon, "test-secret")
+	assert.NoError(t, err)
+	body, _ := json.Marshal(map[string]string{"name": "Console"})
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/offline-grants", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := app.Test(req)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+	svc.AssertExpectations(t)
+}
+
+func TestJWKSHandler_IsPublic(t *testing.T) {
+	svc := new(mockAuthService)
+	app := newTestApp(svc, "test-secret")
+	jwks := map[string]interface{}{"keys": []map[string]string{{"kty": "OKP"}}}
+	svc.On("OfflineJWKS").Return(jwks)
+
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/jwks.json", nil)
+	resp, err := app.Test(req)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	svc.AssertExpectations(t)
 }
 

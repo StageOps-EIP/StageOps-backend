@@ -11,12 +11,22 @@ const (
 	ActionMaterialUpdated    = "MATERIAL_UPDATED"
 	ActionIncidentReported   = "INCIDENT_REPORTED"
 	ActionUserModulesUpdated = "USER_MODULES_UPDATED"
+	ActionUserRegistered     = "USER_REGISTERED"
+	ActionLoginSucceeded     = "LOGIN_SUCCEEDED"
+	ActionLoginFailed        = "LOGIN_FAILED"
+	ActionEmailVerified      = "EMAIL_VERIFIED"
+	ActionSessionRefreshed   = "SESSION_REFRESHED"
+	ActionSessionRevoked     = "SESSION_REVOKED"
+	ActionAllSessionsRevoked = "ALL_SESSIONS_REVOKED"
+	ActionOfflineGrantIssued = "OFFLINE_GRANT_ISSUED"
+	ActionDeviceRevoked      = "DEVICE_REVOKED"
 )
 
 // AuditEntry is a CouchDB document stored under id "audit::<uuid>".
 type AuditEntry struct {
 	ID         string          `json:"_id"`
 	Type       string          `json:"type"`
+	TheatreID  string          `json:"theatre_id,omitempty"`
 	Action     string          `json:"action"`
 	AuthorID   string          `json:"author_id"`
 	AuthorRole string          `json:"author_role"`

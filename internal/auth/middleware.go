@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/stageops/backend/internal/tenant"
 )
 
 // ModuleChecker abstracts module active-state queries for the middleware layer.
@@ -27,6 +29,24 @@ type UserAccessReader interface {
 // JWTMiddleware validates the Bearer token from the Authorization header.
 // On success it sets "user_id", "email", and "role" in fiber.Ctx locals.
 func JWTMiddleware(secret string, accessReaders ...UserAccessReader) fiber.Handler {
+	return JWTMiddlewareWithConfig(defaultJWTConfig(secret), accessReaders...)
+}
+
+// JWTMiddlewareWithConfig validates access tokens against issuer and audience.
+func JWTMiddlewareWithConfig(cfg JWTConfig, accessReaders ...UserAccessReader) fiber.Handler {
+	var userReader UserAccessReader
+	if len(accessReaders) > 0 {
+		userReader = accessReaders[0]
+	}
+	return jwtMiddleware(cfg, userReader, nil)
+}
+
+// JWTMiddlewareWithSession also enforces server-side session revocation.
+func JWTMiddlewareWithSession(cfg JWTConfig, userReader UserAccessReader, sessionReader SessionRepository) fiber.Handler {
+	return jwtMiddleware(cfg, userReader, sessionReader)
+}
+
+func jwtMiddleware(cfg JWTConfig, userReader UserAccessReader, sessionReader SessionRepository) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		header := c.Get("Authorization")
 		if header == "" {
@@ -38,7 +58,7 @@ func JWTMiddleware(secret string, accessReaders ...UserAccessReader) fiber.Handl
 			return respondError(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Format d'autorisation invalide.")
 		}
 
-		claims, err := validateToken(parts[1], secret)
+		claims, err := validateAccessToken(parts[1], cfg)
 		if err != nil {
 			return respondError(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Token invalide ou expiré.")
 		}
@@ -49,9 +69,24 @@ func JWTMiddleware(secret string, accessReaders ...UserAccessReader) fiber.Handl
 		email := claims.Email
 		role := claims.Role
 		assignedModules := claims.AssignedModules
+		theatreID := claims.TheatreID
 
-		if len(accessReaders) > 0 && accessReaders[0] != nil {
-			user, findErr := accessReaders[0].FindByID(c.Context(), claims.UserID)
+		if sessionReader != nil {
+			session, findErr := sessionReader.FindByID(c.UserContext(), claims.ID)
+			if errors.Is(findErr, ErrSessionNotFound) {
+				return respondError(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Session invalide ou révoquée.")
+			}
+			if findErr != nil || session == nil {
+				return respondError(c, fiber.StatusServiceUnavailable, "AUTH_UNAVAILABLE", "Vérification de la session indisponible.")
+			}
+			if session.RevokedAt != nil || !time.Now().UTC().Before(session.ExpiresAt) ||
+				session.UserID != claims.UserID || session.TheatreID != claims.TheatreID {
+				return respondError(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Session invalide ou révoquée.")
+			}
+		}
+
+		if userReader != nil {
+			user, findErr := userReader.FindByID(c.UserContext(), claims.UserID)
 			if errors.Is(findErr, ErrUserNotFound) {
 				return respondError(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Utilisateur invalide.")
 			}
@@ -61,12 +96,18 @@ func JWTMiddleware(secret string, accessReaders ...UserAccessReader) fiber.Handl
 			email = user.Email
 			role = user.Role
 			assignedModules = user.AssignedModules
+			theatreID = user.TheatreID
+		}
+		if theatreID == "" {
+			return respondError(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Théâtre utilisateur manquant.")
 		}
 
 		c.Locals("user_id", claims.UserID)
 		c.Locals("email", email)
 		c.Locals("role", role)
 		c.Locals("assigned_modules", assignedModules)
+		c.Locals("theatre_id", theatreID)
+		c.SetUserContext(tenant.WithTheatreID(c.UserContext(), theatreID))
 
 		return c.Next()
 	}
@@ -98,7 +139,7 @@ func RequireProjectModule(moduleName string, checker ProjectModuleChecker) fiber
 		if projectID == "" {
 			return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Identifiant projet manquant.")
 		}
-		active, err := checker.IsModuleActive(c.Context(), projectID, targetModule)
+		active, err := checker.IsModuleActive(c.UserContext(), projectID, targetModule)
 		if err != nil {
 			return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Impossible de vérifier l'état du module du projet.")
 		}
@@ -227,7 +268,7 @@ func RequireModuleActive(moduleName string, checker ModuleChecker) fiber.Handler
 			return c.Next()
 		}
 
-		active, err := checker.IsActive(c.Context(), moduleName)
+		active, err := checker.IsActive(c.UserContext(), moduleName)
 		if err != nil {
 			return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Impossible de vérifier l'état du module.")
 		}

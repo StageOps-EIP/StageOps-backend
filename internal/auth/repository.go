@@ -14,10 +14,45 @@ import (
 // UserRepository defines the persistence contract for users.
 type UserRepository interface {
 	FindByEmail(ctx context.Context, email string) (*User, error)
+	FindByVerificationHash(ctx context.Context, hash string) (*User, error)
 	FindByID(ctx context.Context, id string) (*User, error)
 	FindByRole(ctx context.Context, role string) (*User, error)
 	Create(ctx context.Context, user *User) error
 	UpdateUser(ctx context.Context, user *User) error
+}
+
+// FindByVerificationHash returns the user owning a pending verification token.
+func (r *CouchDBRepository) FindByVerificationHash(ctx context.Context, hash string) (*User, error) {
+	params := url.Values{}
+	params.Set("key", fmt.Sprintf("%q", hash))
+	params.Set("include_docs", "true")
+	params.Set("limit", "1")
+	rawURL := fmt.Sprintf(
+		"%s/%s/_design/users/_view/by_verification_hash?%s",
+		r.cfg.BaseURL, url.PathEscape(r.cfg.DB), params.Encode(),
+	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building request: %w", err)
+	}
+	req.SetBasicAuth(r.cfg.Username, r.cfg.Password)
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("querying CouchDB: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("CouchDB returned status %d", resp.StatusCode)
+	}
+	var viewResp couchViewResponse
+	if err := json.NewDecoder(resp.Body).Decode(&viewResp); err != nil {
+		return nil, fmt.Errorf("decoding view response: %w", err)
+	}
+	if len(viewResp.Rows) == 0 || viewResp.Rows[0].Doc.Type != "user" {
+		return nil, ErrUserNotFound
+	}
+	user := viewResp.Rows[0].Doc
+	return &user, nil
 }
 
 // CouchConfig holds CouchDB connection settings read from environment.
@@ -196,7 +231,7 @@ func (r *CouchDBRepository) UpdateUser(ctx context.Context, user *User) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusConflict {
-		return fmt.Errorf("document conflict on update")
+		return fmt.Errorf("updating user revision: %w", ErrUserConflict)
 	}
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("CouchDB returned status %d", resp.StatusCode)

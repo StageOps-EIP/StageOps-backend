@@ -6,12 +6,13 @@ import (
 	"fmt"
 
 	"github.com/stageops/backend/internal/couch"
+	"github.com/stageops/backend/internal/tenant"
 )
 
 const (
-	docType   = "project"
-	designDoc = "projects"
-	viewAll   = "all"
+	docType       = "project"
+	designDoc     = "projects"
+	viewByTheatre = "by_theatre"
 )
 
 // Repository is the persistence contract for projects.
@@ -34,8 +35,12 @@ func NewCouchDBRepository(cfg couch.Config) *CouchDBRepository {
 }
 
 func (r *CouchDBRepository) List(ctx context.Context) ([]Project, error) {
+	theatreID, err := tenant.RequireTheatreID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var projects []Project
-	if err := r.db.ListByView(ctx, designDoc, viewAll, &projects); err != nil {
+	if err := r.db.ListByViewKey(ctx, designDoc, viewByTheatre, theatreID, &projects); err != nil {
 		return nil, fmt.Errorf("listing projects: %w", err)
 	}
 	return projects, nil
@@ -46,13 +51,19 @@ func (r *CouchDBRepository) FindByID(ctx context.Context, id string) (*Project, 
 	if err := r.db.GetDoc(ctx, id, &project); err != nil {
 		return nil, mapCouchError(err, "fetching project")
 	}
-	if project.Type != docType {
+	theatreID, err := tenant.RequireTheatreID(ctx)
+	if err != nil || project.Type != docType || project.TheatreID != theatreID {
 		return nil, ErrNotFound
 	}
 	return &project, nil
 }
 
 func (r *CouchDBRepository) Create(ctx context.Context, project *Project) error {
+	theatreID, err := tenant.RequireTheatreID(ctx)
+	if err != nil {
+		return err
+	}
+	project.TheatreID = theatreID
 	if err := r.db.PutDoc(ctx, project.ID, project); err != nil {
 		return mapCouchError(err, "creating project")
 	}
@@ -60,6 +71,13 @@ func (r *CouchDBRepository) Create(ctx context.Context, project *Project) error 
 }
 
 func (r *CouchDBRepository) Update(ctx context.Context, project *Project) error {
+	theatreID, err := tenant.RequireTheatreID(ctx)
+	if err != nil {
+		return err
+	}
+	if project.TheatreID != theatreID {
+		return ErrNotFound
+	}
 	if err := r.db.PutDoc(ctx, project.ID, project); err != nil {
 		return mapCouchError(err, "updating project")
 	}
@@ -67,6 +85,13 @@ func (r *CouchDBRepository) Update(ctx context.Context, project *Project) error 
 }
 
 func (r *CouchDBRepository) Delete(ctx context.Context, id, rev string) error {
+	project, err := r.FindByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if project.Rev != rev {
+		return ErrConflict
+	}
 	if err := r.db.DeleteDoc(ctx, id, rev); err != nil {
 		return mapCouchError(err, "deleting project")
 	}

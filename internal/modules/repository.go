@@ -7,7 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
+
+	"github.com/stageops/backend/internal/tenant"
 )
 
 var ErrModuleNotFound = errors.New("module not found")
@@ -35,16 +39,21 @@ type CouchDBRepository struct {
 
 // NewCouchDBRepository creates a ready-to-use CouchDB modules repository.
 func NewCouchDBRepository(cfg CouchConfig) *CouchDBRepository {
+	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
 	return &CouchDBRepository{
 		cfg:    cfg,
 		client: &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
-// GetByName fetches a module document by its CouchDB _id ("module::<name>").
+// GetByName fetches a module document scoped to the authenticated theatre.
 func (r *CouchDBRepository) GetByName(ctx context.Context, name string) (*Module, error) {
-	docID := fmt.Sprintf("module::%s", name)
-	rawURL := fmt.Sprintf("%s/%s/%s", r.cfg.BaseURL, r.cfg.DB, docID)
+	theatreID, err := tenant.RequireTheatreID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	docID := fmt.Sprintf("module::%s::%s", theatreID, name)
+	rawURL := fmt.Sprintf("%s/%s/%s", r.cfg.BaseURL, url.PathEscape(r.cfg.DB), url.PathEscape(docID))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
@@ -69,6 +78,9 @@ func (r *CouchDBRepository) GetByName(ctx context.Context, name string) (*Module
 	if err := json.NewDecoder(resp.Body).Decode(&mod); err != nil {
 		return nil, fmt.Errorf("decoding module document: %w", err)
 	}
+	if mod.Type != "module" || mod.TheatreID != theatreID || mod.Name != name {
+		return nil, ErrModuleNotFound
+	}
 
 	return &mod, nil
 }
@@ -88,7 +100,7 @@ func (r *CouchDBRepository) Toggle(ctx context.Context, name string) (*Module, e
 		return nil, fmt.Errorf("encoding module document: %w", err)
 	}
 
-	rawURL := fmt.Sprintf("%s/%s/%s", r.cfg.BaseURL, r.cfg.DB, mod.ID)
+	rawURL := fmt.Sprintf("%s/%s/%s", r.cfg.BaseURL, url.PathEscape(r.cfg.DB), url.PathEscape(mod.ID))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, rawURL, bytes.NewReader(body))
 	if err != nil {
@@ -113,18 +125,24 @@ func (r *CouchDBRepository) Toggle(ctx context.Context, name string) (*Module, e
 	return mod, nil
 }
 
-// couchAllDocsResponse models the CouchDB _all_docs response envelope.
-type couchAllDocsResponse struct {
+type couchModulesViewResponse struct {
 	Rows []struct {
 		Doc Module `json:"doc"`
 	} `json:"rows"`
 }
 
-// GetAll returns all module documents using _all_docs with startkey/endkey.
+// GetAll returns only modules belonging to the authenticated theatre.
 func (r *CouchDBRepository) GetAll(ctx context.Context) ([]Module, error) {
+	theatreID, err := tenant.RequireTheatreID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	params := url.Values{}
+	params.Set("include_docs", "true")
+	params.Set("key", fmt.Sprintf("%q", theatreID))
 	rawURL := fmt.Sprintf(
-		`%s/%s/_all_docs?include_docs=true&startkey="module::"&endkey="module::\ufff0"`,
-		r.cfg.BaseURL, r.cfg.DB,
+		"%s/%s/_design/modules/_view/by_theatre?%s",
+		r.cfg.BaseURL, url.PathEscape(r.cfg.DB), params.Encode(),
 	)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
@@ -143,14 +161,16 @@ func (r *CouchDBRepository) GetAll(ctx context.Context) ([]Module, error) {
 		return nil, fmt.Errorf("CouchDB returned status %d", resp.StatusCode)
 	}
 
-	var allDocs couchAllDocsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&allDocs); err != nil {
-		return nil, fmt.Errorf("decoding _all_docs response: %w", err)
+	var result couchModulesViewResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding modules view: %w", err)
 	}
 
-	mods := make([]Module, 0, len(allDocs.Rows))
-	for _, row := range allDocs.Rows {
-		mods = append(mods, row.Doc)
+	mods := make([]Module, 0, len(result.Rows))
+	for _, row := range result.Rows {
+		if row.Doc.Type == "module" && row.Doc.TheatreID == theatreID {
+			mods = append(mods, row.Doc)
+		}
 	}
 
 	return mods, nil

@@ -5,9 +5,11 @@ set -eu
 : "${COUCHDB_DB:?COUCHDB_DB is required}"
 : "${COUCHDB_USER:?COUCHDB_USER is required}"
 : "${COUCHDB_PASSWORD:?COUCHDB_PASSWORD is required}"
+: "${DEFAULT_THEATRE_ID:?DEFAULT_THEATRE_ID is required}"
 
 COUCH=${COUCHDB_URL%/}
-DB=$COUCHDB_DB
+DATA_DB=$COUCHDB_DB
+AUTH_DB=${COUCHDB_AUTH_DB:-stageops_auth}
 AUTH="${COUCHDB_USER}:${COUCHDB_PASSWORD}"
 MAX_ATTEMPTS=${COUCHDB_STARTUP_ATTEMPTS:-60}
 
@@ -22,23 +24,30 @@ until curl --fail --silent --user "$AUTH" "$COUCH/_up" >/dev/null 2>&1; do
   sleep 2
 done
 
-db_status=$(curl --silent --output /dev/null --write-out '%{http_code}' --user "$AUTH" "$COUCH/$DB")
-case "$db_status" in
-  200)
-    ;;
-  404)
-    curl --fail --silent --show-error --request PUT --user "$AUTH" "$COUCH/$DB" >/dev/null
-    ;;
-  *)
-    echo "Unable to inspect CouchDB database: HTTP $db_status" >&2
-    exit 1
-    ;;
-esac
+ensure_db() {
+  db=$1
+  db_status=$(curl --silent --output /dev/null --write-out '%{http_code}' --user "$AUTH" "$COUCH/$db")
+  case "$db_status" in
+    200)
+      ;;
+    404)
+      curl --fail --silent --show-error --request PUT --user "$AUTH" "$COUCH/$db" >/dev/null
+      ;;
+    *)
+      echo "Unable to inspect CouchDB database $db: HTTP $db_status" >&2
+      exit 1
+      ;;
+  esac
+}
+
+ensure_db "$DATA_DB"
+ensure_db "$AUTH_DB"
 
 upsert_design() {
-  design=$1
-  desired=$2
-  url="$COUCH/$DB/_design/$design"
+  db=$1
+  design=$2
+  desired=$3
+  url="$COUCH/$db/_design/$design"
   response=$(curl --silent --show-error --user "$AUTH" --write-out '\n%{http_code}' "$url")
   status=$(printf '%s\n' "$response" | tail -n 1)
   current=$(printf '%s\n' "$response" | sed '$d')
@@ -66,7 +75,7 @@ upsert_design() {
     --header "Content-Type: application/json" --data "$payload" "$url" >/dev/null
 }
 
-upsert_design "users" '{
+upsert_design "$AUTH_DB" "users" '{
   "_id": "_design/users",
   "views": {
     "by_email": {
@@ -74,54 +83,115 @@ upsert_design "users" '{
     },
     "by_role": {
       "map": "function(doc) { if (doc.type === \"user\" && doc.role) emit(doc.role, null); }"
+    },
+    "by_verification_hash": {
+      "map": "function(doc) { if (doc.type === \"user\" && doc.verification_token_hash) emit(doc.verification_token_hash, null); }"
     }
   }
 }'
 
-upsert_design "equipment" '{
+upsert_design "$AUTH_DB" "sessions" '{
+  "_id": "_design/sessions",
+  "views": {
+    "by_refresh_hash": {
+      "map": "function(doc) { if (doc.type === \"session\") { if (doc.refresh_token_hash) emit(doc.refresh_token_hash, null); if (doc.previous_refresh_hash) emit(doc.previous_refresh_hash, null); } }"
+    },
+    "by_user": {
+      "map": "function(doc) { if (doc.type === \"session\" && doc.user_id) emit(doc.user_id, null); }"
+    }
+  }
+}'
+
+upsert_design "$AUTH_DB" "devices" '{
+  "_id": "_design/devices",
+  "views": {
+    "by_user": {
+      "map": "function(doc) { if (doc.type === \"device\" && doc.user_id) emit(doc.user_id, null); }"
+    }
+  }
+}'
+
+upsert_design "$DATA_DB" "equipment" '{
   "_id": "_design/equipment",
   "views": {
-    "all": {
-      "map": "function(doc) { if (doc.type === \"equipment\") emit(doc._id, null); }"
+    "by_theatre": {
+      "map": "function(doc) { if (doc.type === \"equipment\" && doc.theatre_id) emit(doc.theatre_id, null); }"
     }
   }
 }'
 
-upsert_design "events" '{
+upsert_design "$DATA_DB" "events" '{
   "_id": "_design/events",
   "views": {
-    "all": {
-      "map": "function(doc) { if (doc.type === \"event\") emit(doc._id, null); }"
+    "by_theatre": {
+      "map": "function(doc) { if (doc.type === \"event\" && doc.theatre_id) emit(doc.theatre_id, null); }"
     }
   }
 }'
 
-upsert_design "incidents" '{
+upsert_design "$DATA_DB" "incidents" '{
   "_id": "_design/incidents",
   "views": {
-    "all": {
-      "map": "function(doc) { if (doc.type === \"incident\") emit(doc._id, null); }"
+    "by_theatre": {
+      "map": "function(doc) { if (doc.type === \"incident\" && doc.theatre_id) emit(doc.theatre_id, null); }"
     }
   }
 }'
 
-upsert_design "team" '{
+upsert_design "$DATA_DB" "team" '{
   "_id": "_design/team",
   "views": {
-    "all": {
-      "map": "function(doc) { if (doc.type === \"member\") emit(doc._id, null); }"
+    "by_theatre": {
+      "map": "function(doc) { if (doc.type === \"member\" && doc.theatre_id) emit(doc.theatre_id, null); }"
     }
   }
 }'
 
-upsert_design "projects" '{
+upsert_design "$DATA_DB" "projects" '{
   "_id": "_design/projects",
   "views": {
-    "all": {
-      "map": "function(doc) { if (doc.type === \"project\") emit(doc._id, null); }"
+    "by_theatre": {
+      "map": "function(doc) { if (doc.type === \"project\" && doc.theatre_id) emit(doc.theatre_id, null); }"
     }
   }
 }'
+
+upsert_design "$DATA_DB" "modules" '{
+  "_id": "_design/modules",
+  "views": {
+    "by_theatre": {
+      "map": "function(doc) { if (doc.type === \"module\" && doc.theatre_id) emit(doc.theatre_id, null); }"
+    }
+  }
+}'
+
+ensure_module() {
+  name=$1
+  id="module::${DEFAULT_THEATRE_ID}::${name}"
+  encoded_id=$(printf '%s' "$id" | jq -sRr @uri)
+  url="$COUCH/$DATA_DB/$encoded_id"
+  status=$(curl --silent --output /dev/null --write-out '%{http_code}' --user "$AUTH" "$url")
+  case "$status" in
+    200)
+      ;;
+    404)
+      payload=$(jq -nc \
+        --arg id "$id" --arg theatre "$DEFAULT_THEATRE_ID" --arg name "$name" \
+        --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{_id: $id, type: "module", theatre_id: $theatre, name: $name, active: true, updated_at: $updated_at}')
+      curl --fail --silent --show-error --request PUT --user "$AUTH" \
+        --header "Content-Type: application/json" --data "$payload" "$url" >/dev/null
+      ;;
+    *)
+      echo "Unable to inspect module $name: HTTP $status" >&2
+      exit 1
+      ;;
+  esac
+}
+
+ensure_module "lumiere"
+ensure_module "son"
+ensure_module "plateau"
 
 echo "CouchDB is ready; starting StageOps backend."
 exec ./server

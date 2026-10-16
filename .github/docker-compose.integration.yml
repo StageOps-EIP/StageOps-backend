@@ -1,0 +1,10 @@
+services:
+  couchdb:
+    # Production keeps CouchDB exclusively on the internal data network.
+    # CI also needs the edge network so the loopback-only test port can be
+    # reached from the GitHub runner.
+    networks:
+      - data
+      - edge
+    ports:
+      - "127.0.0.1:15984:5984"

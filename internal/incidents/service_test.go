@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stageops/backend/internal/tenant"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -70,7 +71,7 @@ func TestServiceCreateUsesAuthenticatedReporter(t *testing.T) {
 	repo := &repositoryMock{}
 	input := Input{Title: "Panne", Description: "Le projecteur ne répond plus", Severity: "high"}
 
-	result, err := NewService(repo, nil).Create(context.Background(), "project::1", "lighting", input, "user::1", "lumiere")
+	result, err := NewService(repo, nil).Create(tenant.WithTheatreID(context.Background(), "theatre::one"), "project::1", "lighting", input, "user::1", "lumiere")
 
 	require.NoError(t, err)
 	assert.Equal(t, "user::1", result.ReportedBy)

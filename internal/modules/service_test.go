@@ -5,9 +5,14 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/stageops/backend/internal/tenant"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
+
+func moduleTestContext() context.Context {
+	return tenant.WithTheatreID(context.Background(), "theatre::one")
+}
 
 // --- Mock repository ---
 
@@ -83,21 +88,21 @@ func TestService_Toggle_Success(t *testing.T) {
 	svc := NewService(repo, cache, nil)
 
 	// Pre-populate cache to verify invalidation.
-	cache.Set("lumiere", true)
+	cache.Set("theatre::one::lumiere", true)
 
 	repo.On("Toggle", mock.Anything, "lumiere").Return(&Module{
 		Name:   "lumiere",
 		Active: false,
 	}, nil)
 
-	result, err := svc.Toggle(context.Background(), "lumiere", "user::rg1", "rg")
+	result, err := svc.Toggle(moduleTestContext(), "lumiere", "user::rg1", "rg")
 
 	assert.NoError(t, err)
 	assert.Equal(t, "lumiere", result.Name)
 	assert.False(t, result.Active)
 
 	// Cache must be invalidated.
-	_, ok := cache.Get("lumiere")
+	_, ok := cache.Get("theatre::one::lumiere")
 	assert.False(t, ok, "cache should be invalidated after toggle")
 }
 
@@ -119,7 +124,7 @@ func TestService_Toggle_NotFound(t *testing.T) {
 
 	repo.On("Toggle", mock.Anything, "lumiere").Return(nil, ErrModuleNotFound)
 
-	_, err := svc.Toggle(context.Background(), "lumiere", "user::rg1", "rg")
+	_, err := svc.Toggle(moduleTestContext(), "lumiere", "user::rg1", "rg")
 
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrModuleNotFound))
@@ -130,9 +135,9 @@ func TestService_IsActive_CacheHit(t *testing.T) {
 	cache := NewCache()
 	svc := NewService(repo, cache, nil)
 
-	cache.Set("lumiere", true)
+	cache.Set("theatre::one::lumiere", true)
 
-	active, err := svc.IsActive(context.Background(), "lumiere")
+	active, err := svc.IsActive(moduleTestContext(), "lumiere")
 
 	assert.NoError(t, err)
 	assert.True(t, active)
@@ -150,13 +155,30 @@ func TestService_IsActive_CacheMiss(t *testing.T) {
 		Active: false,
 	}, nil)
 
-	active, err := svc.IsActive(context.Background(), "son")
+	active, err := svc.IsActive(moduleTestContext(), "son")
 
 	assert.NoError(t, err)
 	assert.False(t, active)
 
 	// Value should now be cached.
-	cached, ok := cache.Get("son")
+	cached, ok := cache.Get("theatre::one::son")
 	assert.True(t, ok)
 	assert.False(t, cached)
+}
+
+func TestService_IsActiveDoesNotShareCacheAcrossTheatres(t *testing.T) {
+	repo := new(mockRepository)
+	cache := NewCache()
+	svc := NewService(repo, cache, nil)
+	cache.Set("theatre::one::son", true)
+	otherContext := tenant.WithTheatreID(context.Background(), "theatre::other")
+	repo.On("GetByName", mock.Anything, "son").Return(&Module{
+		TheatreID: "theatre::other", Name: "son", Active: false,
+	}, nil)
+
+	active, err := svc.IsActive(otherContext, "son")
+
+	assert.NoError(t, err)
+	assert.False(t, active)
+	repo.AssertExpectations(t)
 }

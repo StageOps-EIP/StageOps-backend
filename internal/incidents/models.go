@@ -25,6 +25,7 @@ type doc struct {
 	ID              string     `json:"_id"`
 	Rev             string     `json:"_rev,omitempty"`
 	Type            string     `json:"type"`
+	TheatreID       string     `json:"theatre_id"`
 	ProjectID       string     `json:"project_id"`
 	Module          string     `json:"module"`
 	Title           string     `json:"title"`
@@ -42,6 +43,7 @@ type doc struct {
 
 type Incident struct {
 	ID              string     `json:"id"`
+	TheatreID       string     `json:"theatre_id"`
 	ProjectID       string     `json:"project_id"`
 	Module          string     `json:"module"`
 	Title           string     `json:"title"`
@@ -74,7 +76,7 @@ func (e *ValidationError) Error() string { return e.Message }
 
 func toPublic(d *doc) *Incident {
 	return &Incident{
-		ID: d.ID, ProjectID: d.ProjectID, Module: d.Module, Title: d.Title,
+		ID: d.ID, TheatreID: d.TheatreID, ProjectID: d.ProjectID, Module: d.Module, Title: d.Title,
 		Description: d.Description, Severity: d.Severity, Status: d.Status,
 		EquipmentID: d.EquipmentID, ReportedBy: d.ReportedBy, ResolvedAt: d.ResolvedAt,
 		ResolutionNotes: d.ResolutionNotes, Images: d.Images, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,

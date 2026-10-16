@@ -19,6 +19,7 @@ type doc struct {
 	ID                string    `json:"_id"`
 	Rev               string    `json:"_rev,omitempty"`
 	Type              string    `json:"type"`
+	TheatreID         string    `json:"theatre_id"`
 	Title             string    `json:"title"`
 	StartDate         time.Time `json:"startDate"`
 	EndDate           time.Time `json:"endDate"`
@@ -32,6 +33,7 @@ type doc struct {
 
 type Event struct {
 	ID                string    `json:"id"`
+	TheatreID         string    `json:"theatre_id"`
 	Title             string    `json:"title"`
 	StartDate         time.Time `json:"startDate"`
 	EndDate           time.Time `json:"endDate"`
@@ -62,6 +64,7 @@ func (e *ValidationError) Error() string { return e.Message }
 func toPublic(d *doc) *Event {
 	return &Event{
 		ID:                d.ID,
+		TheatreID:         d.TheatreID,
 		Title:             d.Title,
 		StartDate:         d.StartDate,
 		EndDate:           d.EndDate,

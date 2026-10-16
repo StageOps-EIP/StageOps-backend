@@ -17,7 +17,7 @@ func NewHandler(service ProjectService) *Handler {
 }
 
 func (h *Handler) List(c *fiber.Ctx) error {
-	projects, err := h.service.List(c.Context())
+	projects, err := h.service.List(c.UserContext())
 	if err != nil {
 		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Erreur lors de la récupération des projets.")
 	}
@@ -25,7 +25,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 }
 
 func (h *Handler) Get(c *fiber.Ctx) error {
-	project, err := h.service.Get(c.Context(), c.Params("id"))
+	project, err := h.service.Get(c.UserContext(), c.Params("id"))
 	if err != nil {
 		return mapError(c, err)
 	}
@@ -37,7 +37,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	if err := c.BodyParser(&input); err != nil {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Corps de requête invalide.")
 	}
-	project, err := h.service.Create(c.Context(), input, localString(c, "user_id"), localString(c, "role"))
+	project, err := h.service.Create(c.UserContext(), input, localString(c, "user_id"), localString(c, "role"))
 	if err != nil {
 		return mapError(c, err)
 	}
@@ -49,7 +49,7 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 	if err := c.BodyParser(&input); err != nil {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Corps de requête invalide.")
 	}
-	project, err := h.service.Update(c.Context(), c.Params("id"), input, localString(c, "user_id"), localString(c, "role"))
+	project, err := h.service.Update(c.UserContext(), c.Params("id"), input, localString(c, "user_id"), localString(c, "role"))
 	if err != nil {
 		return mapError(c, err)
 	}
@@ -57,7 +57,7 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 }
 
 func (h *Handler) Delete(c *fiber.Ctx) error {
-	err := h.service.Delete(c.Context(), c.Params("id"), localString(c, "user_id"), localString(c, "role"))
+	err := h.service.Delete(c.UserContext(), c.Params("id"), localString(c, "user_id"), localString(c, "role"))
 	if err != nil {
 		return mapError(c, err)
 	}

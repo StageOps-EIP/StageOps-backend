@@ -7,11 +7,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stageops/backend/internal/couch"
+	"github.com/stageops/backend/internal/tenant"
 )
 
 const docType = "event"
 const designDoc = "events"
-const viewAll = "all"
+const viewByTheatre = "by_theatre"
 
 type Repository struct {
 	db *couch.Client
@@ -22,8 +23,12 @@ func NewRepository(cfg couch.Config) *Repository {
 }
 
 func (r *Repository) List(ctx context.Context) ([]Event, error) {
+	theatreID, err := tenant.RequireTheatreID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var docs []doc
-	if err := r.db.ListByView(ctx, designDoc, viewAll, &docs); err != nil {
+	if err := r.db.ListByViewKey(ctx, designDoc, viewByTheatre, theatreID, &docs); err != nil {
 		return nil, fmt.Errorf("listing events: %w", err)
 	}
 	return toPublicSlice(docs), nil
@@ -38,14 +43,15 @@ func (r *Repository) FindByID(ctx context.Context, id string) (*Event, error) {
 }
 
 func (r *Repository) Create(ctx context.Context, input *Input) (*Event, error) {
-	if err := validateInput(input); err != nil {
+	id := fmt.Sprintf("event::%s", uuid.New().String())
+	theatreID, err := tenant.RequireTheatreID(ctx)
+	if err != nil {
 		return nil, err
 	}
-
-	id := fmt.Sprintf("event::%s", uuid.New().String())
 	d := &doc{
 		ID:                id,
 		Type:              docType,
+		TheatreID:         theatreID,
 		Title:             input.Title,
 		StartDate:         input.StartDate,
 		EndDate:           input.EndDate,
@@ -64,10 +70,6 @@ func (r *Repository) Create(ctx context.Context, input *Input) (*Event, error) {
 }
 
 func (r *Repository) Update(ctx context.Context, id string, input *Input) (*Event, error) {
-	if err := validateInput(input); err != nil {
-		return nil, err
-	}
-
 	current, err := r.findDocByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -112,21 +114,9 @@ func (r *Repository) findDocByID(ctx context.Context, id string) (*doc, error) {
 		}
 		return nil, fmt.Errorf("fetching event %s: %w", id, err)
 	}
-	if current.Type != docType {
+	theatreID, err := tenant.RequireTheatreID(ctx)
+	if err != nil || current.Type != docType || current.TheatreID != theatreID {
 		return nil, ErrNotFound
 	}
 	return &current, nil
-}
-
-func validateInput(input *Input) error {
-	if input.Title == "" {
-		return &ValidationError{Message: "Le champ 'title' est requis."}
-	}
-	if input.Status != "" && !validStatuses[input.Status] {
-		return ErrInvalidStatus
-	}
-	if input.Status == "" {
-		input.Status = "planning"
-	}
-	return nil
 }

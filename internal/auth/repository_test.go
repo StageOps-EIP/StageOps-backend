@@ -45,3 +45,34 @@ func TestCouchDBRepositoryFindByRole(t *testing.T) {
 	assert.Equal(t, "user::admin", user.ID)
 	assert.Equal(t, RoleRG, user.Role)
 }
+
+func TestCouchDBRepositoryFindByVerificationHash(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/stageops_auth/_design/users/_view/by_verification_hash", r.URL.Path)
+		assert.Equal(t, `"verification-hash"`, r.URL.Query().Get("key"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"rows":[{"doc":{"_id":"user::one","type":"user","email":"user@example.com","verification_token_hash":"verification-hash"}}]}`)
+	}))
+	t.Cleanup(server.Close)
+
+	repo := NewCouchDBRepository(CouchConfig{BaseURL: server.URL, DB: "stageops_auth"})
+	user, err := repo.FindByVerificationHash(context.Background(), "verification-hash")
+
+	require.NoError(t, err)
+	assert.Equal(t, "user::one", user.ID)
+}
+
+func TestCouchDBRepositoryUpdateUserReturnsTypedConflict(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPut, r.Method)
+		assert.Equal(t, "/stageops_auth/user::one", r.URL.Path)
+		w.WriteHeader(http.StatusConflict)
+	}))
+	t.Cleanup(server.Close)
+
+	repo := NewCouchDBRepository(CouchConfig{BaseURL: server.URL, DB: "stageops_auth"})
+	err := repo.UpdateUser(context.Background(), &User{ID: "user::one", Rev: "1-old", Type: "user"})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUserConflict)
+}

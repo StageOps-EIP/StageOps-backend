@@ -11,6 +11,10 @@ ARCHIVE="stageops-couchdb-$STAMP.tar.gz"
 mkdir -p "$BACKUP_DIR"
 
 restart_services() {
+  if [ "${RESTART_SERVICES:-true}" != "true" ]; then
+    return
+  fi
+
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" start couchdb backend >/dev/null 2>&1 || true
 }
 trap restart_services EXIT INT TERM

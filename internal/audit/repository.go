@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/stageops/backend/internal/tenant"
 )
 
 // Repository is the persistence contract for audit log entries.
@@ -39,6 +41,9 @@ func NewCouchDBRepository(cfg CouchConfig) *CouchDBRepository {
 
 // Log writes an audit entry to CouchDB using PUT /<db>/<id>.
 func (r *CouchDBRepository) Log(ctx context.Context, entry AuditEntry) error {
+	if entry.TheatreID == "" {
+		entry.TheatreID, _ = tenant.TheatreID(ctx)
+	}
 	body, err := json.Marshal(entry)
 	if err != nil {
 		return fmt.Errorf("encoding audit entry: %w", err)

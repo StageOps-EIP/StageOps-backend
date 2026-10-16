@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stageops/backend/internal/audit"
+	"github.com/stageops/backend/internal/tenant"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -81,7 +82,7 @@ func TestServiceCreateDefaultsModulesAndLogs(t *testing.T) {
 	audits := &auditMock{err: errors.New("audit unavailable")}
 	service := NewService(repo, audits)
 
-	result, err := service.Create(context.Background(), CreateInput{
+	result, err := service.Create(tenant.WithTheatreID(context.Background(), "theatre::one"), CreateInput{
 		Name:      " Festival ",
 		Venue:     " Arena ",
 		StartDate: "2027-06-10",

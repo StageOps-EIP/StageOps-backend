@@ -6,12 +6,13 @@ import (
 	"fmt"
 
 	"github.com/stageops/backend/internal/couch"
+	"github.com/stageops/backend/internal/tenant"
 )
 
 const (
-	docType   = "incident"
-	designDoc = "incidents"
-	viewAll   = "all"
+	docType       = "incident"
+	designDoc     = "incidents"
+	viewByTheatre = "by_theatre"
 )
 
 type Repository interface {
@@ -29,8 +30,12 @@ func NewRepository(cfg couch.Config) *CouchDBRepository {
 }
 
 func (r *CouchDBRepository) List(ctx context.Context) ([]doc, error) {
+	theatreID, err := tenant.RequireTheatreID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var docs []doc
-	if err := r.db.ListByView(ctx, designDoc, viewAll, &docs); err != nil {
+	if err := r.db.ListByViewKey(ctx, designDoc, viewByTheatre, theatreID, &docs); err != nil {
 		return nil, fmt.Errorf("listing incidents: %w", err)
 	}
 	return docs, nil
@@ -41,13 +46,19 @@ func (r *CouchDBRepository) FindByID(ctx context.Context, id string) (*doc, erro
 	if err := r.db.GetDoc(ctx, id, &incident); err != nil {
 		return nil, mapRepositoryError(err, "fetching incident")
 	}
-	if incident.Type != docType {
+	theatreID, err := tenant.RequireTheatreID(ctx)
+	if err != nil || incident.Type != docType || incident.TheatreID != theatreID {
 		return nil, ErrNotFound
 	}
 	return &incident, nil
 }
 
 func (r *CouchDBRepository) Create(ctx context.Context, incident *doc) error {
+	theatreID, err := tenant.RequireTheatreID(ctx)
+	if err != nil {
+		return err
+	}
+	incident.TheatreID = theatreID
 	if err := r.db.PutDoc(ctx, incident.ID, incident); err != nil {
 		return mapRepositoryError(err, "creating incident")
 	}
@@ -55,6 +66,13 @@ func (r *CouchDBRepository) Create(ctx context.Context, incident *doc) error {
 }
 
 func (r *CouchDBRepository) Update(ctx context.Context, incident *doc) error {
+	theatreID, err := tenant.RequireTheatreID(ctx)
+	if err != nil {
+		return err
+	}
+	if incident.TheatreID != theatreID {
+		return ErrNotFound
+	}
 	if err := r.db.PutDoc(ctx, incident.ID, incident); err != nil {
 		return mapRepositoryError(err, "updating incident")
 	}
@@ -62,6 +80,13 @@ func (r *CouchDBRepository) Update(ctx context.Context, incident *doc) error {
 }
 
 func (r *CouchDBRepository) Delete(ctx context.Context, id, rev string) error {
+	incident, err := r.FindByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if incident.Rev != rev {
+		return ErrConflict
+	}
 	if err := r.db.DeleteDoc(ctx, id, rev); err != nil {
 		return mapRepositoryError(err, "deleting incident")
 	}
