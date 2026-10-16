@@ -71,6 +71,9 @@ jobs:
               http://127.0.0.1:3000/api/auth/login
           couch_url='http://127.0.0.1:15984'
           couch_auth='stageops_admin:replace-with-at-least-32-random-characters'
+          curl --fail --silent --retry 10 --retry-connrefused --retry-delay 1 \
+            --user "$couch_auth" "$couch_url/_up" \
+            | jq -e '.status == "ok"' >/dev/null
           curl --fail --silent --user "$couch_auth" --request PUT \
             --header 'Content-Type: application/json' \
             --data '{"_id":"user::legacy","type":"user","email":"legacy@example.com","password_hash":"legacy-hash","role":"son"}' \
