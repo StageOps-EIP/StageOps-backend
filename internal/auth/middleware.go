@@ -73,7 +73,13 @@ func jwtMiddleware(cfg JWTConfig, userReader UserAccessReader, sessionReader Ses
 
 		if sessionReader != nil {
 			session, findErr := sessionReader.FindByID(c.UserContext(), claims.ID)
-			if findErr != nil || session.RevokedAt != nil || !time.Now().UTC().Before(session.ExpiresAt) ||
+			if errors.Is(findErr, ErrSessionNotFound) {
+				return respondError(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Session invalide ou révoquée.")
+			}
+			if findErr != nil || session == nil {
+				return respondError(c, fiber.StatusServiceUnavailable, "AUTH_UNAVAILABLE", "Vérification de la session indisponible.")
+			}
+			if session.RevokedAt != nil || !time.Now().UTC().Before(session.ExpiresAt) ||
 				session.UserID != claims.UserID || session.TheatreID != claims.TheatreID {
 				return respondError(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Session invalide ou révoquée.")
 			}
