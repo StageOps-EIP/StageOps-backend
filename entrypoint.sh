@@ -84,6 +84,9 @@ upsert_design "$AUTH_DB" "users" '{
     "by_role": {
       "map": "function(doc) { if (doc.type === \"user\" && doc.role) emit(doc.role, null); }"
     },
+    "by_theatre": {
+      "map": "function(doc) { if (doc.type === \"user\" && doc.theatre_id) emit([doc.theatre_id, doc.email], null); }"
+    },
     "by_verification_hash": {
       "map": "function(doc) { if (doc.type === \"user\" && doc.verification_token_hash) emit(doc.verification_token_hash, null); }"
     }

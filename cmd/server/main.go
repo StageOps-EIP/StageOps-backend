@@ -194,6 +194,7 @@ func run() error {
 	authGroup.Delete("/devices/:id", authenticate, authHandler.RevokeDevice)
 
 	usersGroup := api.Group("/users", authenticate)
+	usersGroup.Get("/", auth.RequireRole(auth.RoleRG), authHandler.ListUsers)
 	usersGroup.Patch("/:id/role", auth.RequireRole(auth.RoleRG), authHandler.UpdateUserRole)
 	usersGroup.Patch("/:id/modules", auth.RequireRole(auth.RoleRG), authHandler.UpdateUserModules)
 
