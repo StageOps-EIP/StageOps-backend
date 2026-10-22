@@ -145,7 +145,7 @@ func run() error {
 	equipmentService := equipment.NewService(equipment.NewRepository(sharedCouchCfg), auditRepo, projectService)
 	equipmentHandler := equipment.NewHandler(equipmentService)
 	eventsHandler := events.NewHandler(events.NewService(events.NewRepository(sharedCouchCfg)))
-	incidentsHandler := incidents.NewHandler(incidents.NewService(incidents.NewRepository(sharedCouchCfg), auditRepo))
+	incidentsHandler := incidents.NewHandler(incidents.NewService(incidents.NewRepository(sharedCouchCfg), auditRepo, projectService, equipmentService))
 	teamHandler := team.NewHandler(team.NewService(team.NewRepository(sharedCouchCfg)))
 
 	rateLimitResponse := func(c *fiber.Ctx) error {
