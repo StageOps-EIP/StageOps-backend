@@ -46,6 +46,31 @@ func TestCouchDBRepositoryFindByRole(t *testing.T) {
 	assert.Equal(t, RoleRG, user.Role)
 }
 
+func TestCouchDBRepositoryListByTheatre(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/stageops_auth/_design/users/_view/by_theatre", r.URL.Path)
+		assert.Equal(t, `["theatre::one"]`, r.URL.Query().Get("startkey"))
+		assert.Equal(t, `["theatre::one",{}]`, r.URL.Query().Get("endkey"))
+		assert.Equal(t, "true", r.URL.Query().Get("include_docs"))
+		assert.Equal(t, "25", r.URL.Query().Get("limit"))
+		assert.Equal(t, "50", r.URL.Query().Get("skip"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"rows":[
+			{"doc":{"_id":"user::a","type":"user","email":"a@example.com","theatre_id":"theatre::one"}},
+			{"doc":{"_id":"user::b","type":"user","email":"b@example.com","theatre_id":"theatre::other"}},
+			{"doc":{"_id":"session::x","type":"session","theatre_id":"theatre::one"}}
+		]}`)
+	}))
+	t.Cleanup(server.Close)
+
+	repo := NewCouchDBRepository(CouchConfig{BaseURL: server.URL, DB: "stageops_auth"})
+	users, err := repo.ListByTheatre(context.Background(), "theatre::one", 25, 50)
+
+	require.NoError(t, err)
+	require.Len(t, users, 1, "documents of another type or theatre are dropped")
+	assert.Equal(t, "user::a", users[0].ID)
+}
+
 func TestCouchDBRepositoryFindByVerificationHash(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/stageops_auth/_design/users/_view/by_verification_hash", r.URL.Path)

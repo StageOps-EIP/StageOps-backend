@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -180,6 +181,33 @@ func (h *Handler) Me(c *fiber.Ctx) error {
 	}
 
 	return c.Status(fiber.StatusOK).JSON(user)
+}
+
+// ListUsers handles GET /api/users?limit=&offset=.
+// Protected by JWTMiddleware + RequireRole(RoleRG).
+func (h *Handler) ListUsers(c *fiber.Ctx) error {
+	limit, err := queryInt(c, "limit")
+	if err != nil {
+		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Le paramètre 'limit' doit être un entier.")
+	}
+	offset, err := queryInt(c, "offset")
+	if err != nil {
+		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Le paramètre 'offset' doit être un entier.")
+	}
+
+	users, err := h.service.ListUsers(c.UserContext(), UserPage{Limit: limit, Offset: offset})
+	if err != nil {
+		return mapServiceError(c, err)
+	}
+	return c.Status(fiber.StatusOK).JSON(users)
+}
+
+func queryInt(c *fiber.Ctx, key string) (int, error) {
+	raw := c.Query(key)
+	if raw == "" {
+		return 0, nil
+	}
+	return strconv.Atoi(raw)
 }
 
 // UpdateUserRole handles PATCH /api/users/:id/role.

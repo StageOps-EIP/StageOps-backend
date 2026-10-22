@@ -56,6 +56,7 @@ type AuthService interface {
 	RevokeDevice(ctx context.Context, userID, deviceID string) error
 	OfflineJWKS() map[string]interface{}
 	GetUser(ctx context.Context, id string) (*UserPublic, error)
+	ListUsers(ctx context.Context, page UserPage) ([]UserPublic, error)
 	UpdateUserRole(ctx context.Context, targetID, newRole, authorID, authorRole string) (*UserPublic, error)
 	UpdateUserModules(ctx context.Context, targetID string, assignedModules []string, authorID, authorRole string) (*UserPublic, error)
 }
@@ -753,6 +754,53 @@ func (s *Service) GetUser(ctx context.Context, id string) (*UserPublic, error) {
 		AssignedModules: append([]string(nil), user.AssignedModules...),
 		CreatedAt:       user.CreatedAt,
 	}, nil
+}
+
+const (
+	DefaultUserPageSize = 50
+	MaxUserPageSize     = 200
+)
+
+// UserPage selects a slice of the theatre's users. A zero Limit means
+// DefaultUserPageSize.
+type UserPage struct {
+	Limit  int
+	Offset int
+}
+
+// ListUsers returns the users of the caller's theatre sorted by email, so that
+// the RG can assign roles and modules.
+func (s *Service) ListUsers(ctx context.Context, page UserPage) ([]UserPublic, error) {
+	if page.Limit == 0 {
+		page.Limit = DefaultUserPageSize
+	}
+	if page.Limit < 1 || page.Limit > MaxUserPageSize {
+		return nil, &ValidationError{Message: fmt.Sprintf("Le paramètre 'limit' doit être compris entre 1 et %d.", MaxUserPageSize)}
+	}
+	if page.Offset < 0 {
+		return nil, &ValidationError{Message: "Le paramètre 'offset' doit être positif ou nul."}
+	}
+	theatreID, ok := tenant.TheatreID(ctx)
+	if !ok {
+		return nil, ErrForbidden
+	}
+
+	users, err := s.repo.ListByTheatre(ctx, theatreID, page.Limit, page.Offset)
+	if err != nil {
+		return nil, fmt.Errorf("listing users: %w", err)
+	}
+	result := make([]UserPublic, 0, len(users))
+	for _, user := range users {
+		result = append(result, UserPublic{
+			ID:              user.ID,
+			Email:           user.Email,
+			TheatreID:       user.TheatreID,
+			Role:            user.Role,
+			AssignedModules: append([]string{}, user.AssignedModules...),
+			CreatedAt:       user.CreatedAt,
+		})
+	}
+	return result, nil
 }
 
 // UpdateUserRole changes the role of the user identified by targetID.

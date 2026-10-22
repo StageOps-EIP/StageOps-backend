@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -17,6 +18,7 @@ type UserRepository interface {
 	FindByVerificationHash(ctx context.Context, hash string) (*User, error)
 	FindByID(ctx context.Context, id string) (*User, error)
 	FindByRole(ctx context.Context, role string) (*User, error)
+	ListByTheatre(ctx context.Context, theatreID string, limit, offset int) ([]User, error)
 	Create(ctx context.Context, user *User) error
 	UpdateUser(ctx context.Context, user *User) error
 }
@@ -169,6 +171,56 @@ func (r *CouchDBRepository) FindByRole(ctx context.Context, role string) (*User,
 	}
 	user := viewResp.Rows[0].Doc
 	return &user, nil
+}
+
+// ListByTheatre returns one page of the users of a theatre, sorted by email,
+// from the _design/users/_view/by_theatre view keyed by [theatre_id, email].
+func (r *CouchDBRepository) ListByTheatre(ctx context.Context, theatreID string, limit, offset int) ([]User, error) {
+	startKey, err := json.Marshal([]interface{}{theatreID})
+	if err != nil {
+		return nil, fmt.Errorf("encoding start key: %w", err)
+	}
+	endKey, err := json.Marshal([]interface{}{theatreID, map[string]interface{}{}})
+	if err != nil {
+		return nil, fmt.Errorf("encoding end key: %w", err)
+	}
+	params := url.Values{}
+	params.Set("startkey", string(startKey))
+	params.Set("endkey", string(endKey))
+	params.Set("include_docs", "true")
+	params.Set("limit", strconv.Itoa(limit))
+	params.Set("skip", strconv.Itoa(offset))
+	rawURL := fmt.Sprintf(
+		"%s/%s/_design/users/_view/by_theatre?%s",
+		r.cfg.BaseURL, url.PathEscape(r.cfg.DB), params.Encode(),
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building request: %w", err)
+	}
+	req.SetBasicAuth(r.cfg.Username, r.cfg.Password)
+
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("querying CouchDB: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("CouchDB returned status %d", resp.StatusCode)
+	}
+
+	var viewResp couchViewResponse
+	if err := json.NewDecoder(resp.Body).Decode(&viewResp); err != nil {
+		return nil, fmt.Errorf("decoding view response: %w", err)
+	}
+	users := make([]User, 0, len(viewResp.Rows))
+	for _, row := range viewResp.Rows {
+		if row.Doc.Type == "user" && row.Doc.TheatreID == theatreID {
+			users = append(users, row.Doc)
+		}
+	}
+	return users, nil
 }
 
 // FindByID fetches a user document by its CouchDB _id.

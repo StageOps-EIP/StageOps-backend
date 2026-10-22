@@ -11,6 +11,7 @@ import (
 	"github.com/stageops/backend/internal/tenant"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -122,6 +123,14 @@ func (m *mockUserRepo) FindByRole(ctx context.Context, role string) (*User, erro
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*User), args.Error(1)
+}
+
+func (m *mockUserRepo) ListByTheatre(ctx context.Context, theatreID string, limit, offset int) ([]User, error) {
+	args := m.Called(ctx, theatreID, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]User), args.Error(1)
 }
 
 func (m *mockUserRepo) Create(ctx context.Context, user *User) error {
@@ -835,4 +844,54 @@ func TestUpdateUserModules_InvalidModule(t *testing.T) {
 
 	var validErr *ValidationError
 	assert.ErrorAs(t, err, &validErr)
+}
+
+func TestListUsers_ReturnsPublicFieldsOfCallerTheatre(t *testing.T) {
+	repo := new(mockUserRepo)
+	svc := NewService(repo, nil, "test-secret")
+	theatreID, _ := tenant.TheatreID(tenantContext())
+	repo.On("ListByTheatre", mock.Anything, theatreID, DefaultUserPageSize, 0).Return([]User{
+		{ID: "user::a", Email: "a@example.com", TheatreID: theatreID, Role: RoleLumiere,
+			AssignedModules: []string{RoleLumiere}, PasswordHash: "secret-hash"},
+		{ID: "user::b", Email: "b@example.com", TheatreID: theatreID, Role: RoleSon},
+	}, nil)
+
+	users, err := svc.ListUsers(tenantContext(), UserPage{})
+
+	require.NoError(t, err)
+	require.Len(t, users, 2)
+	assert.Equal(t, UserPublic{ID: "user::a", Email: "a@example.com", TheatreID: theatreID, Role: RoleLumiere, AssignedModules: []string{RoleLumiere}}, users[0])
+	assert.Equal(t, []string{}, users[1].AssignedModules, "modules are never null in the response")
+	repo.AssertExpectations(t)
+}
+
+func TestListUsers_ForwardsPagination(t *testing.T) {
+	repo := new(mockUserRepo)
+	svc := NewService(repo, nil, "test-secret")
+	repo.On("ListByTheatre", mock.Anything, mock.Anything, 20, 40).Return([]User{}, nil)
+
+	users, err := svc.ListUsers(tenantContext(), UserPage{Limit: 20, Offset: 40})
+
+	require.NoError(t, err)
+	assert.Empty(t, users)
+	repo.AssertExpectations(t)
+}
+
+func TestListUsers_RejectsInvalidPage(t *testing.T) {
+	svc := NewService(new(mockUserRepo), nil, "test-secret")
+
+	for _, page := range []UserPage{{Limit: -1}, {Limit: MaxUserPageSize + 1}, {Offset: -5}} {
+		_, err := svc.ListUsers(tenantContext(), page)
+
+		var validErr *ValidationError
+		assert.ErrorAs(t, err, &validErr, "page %+v", page)
+	}
+}
+
+func TestListUsers_RequiresTheatre(t *testing.T) {
+	svc := NewService(new(mockUserRepo), nil, "test-secret")
+
+	_, err := svc.ListUsers(context.Background(), UserPage{})
+
+	assert.ErrorIs(t, err, ErrForbidden)
 }

@@ -55,6 +55,9 @@ func TestCouchDBConcurrentRegistrationAndSessionPersistence(t *testing.T) {
 			"by_role": map[string]string{
 				"map": `function(doc) { if (doc.type === "user" && doc.role) emit(doc.role, null); }`,
 			},
+			"by_theatre": map[string]string{
+				"map": `function(doc) { if (doc.type === "user" && doc.theatre_id) emit([doc.theatre_id, doc.email], null); }`,
+			},
 		},
 	}
 	designBody, err := json.Marshal(design)
@@ -118,6 +121,11 @@ func TestCouchDBConcurrentRegistrationAndSessionPersistence(t *testing.T) {
 	user, err := userRepo.FindByEmail(context.Background(), "unique@example.com")
 	require.NoError(t, err)
 	assert.Equal(t, "theatre::integration", user.TheatreID)
+
+	theatreUsers, err := userRepo.ListByTheatre(context.Background(), "theatre::integration", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, theatreUsers, 1)
+	assert.Equal(t, user.ID, theatreUsers[0].ID)
 	assert.NotEqual(t, "SecurePass1!", user.PasswordHash)
 	assert.True(t, comparePassword(user.PasswordHash, "SecurePass1!"))
 
