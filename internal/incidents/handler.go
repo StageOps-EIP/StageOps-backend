@@ -2,6 +2,7 @@ package incidents
 
 import (
 	"errors"
+	"log"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -11,7 +12,7 @@ type Handler struct{ service IncidentService }
 func NewHandler(service IncidentService) *Handler { return &Handler{service: service} }
 
 func (h *Handler) List(c *fiber.Ctx) error {
-	incidents, err := h.service.List(c.UserContext(), c.Params("projectId"), c.Params("module"))
+	incidents, err := h.service.List(c.UserContext(), c.Params("projectId"), c.Params("module"), ListFilter{Date: c.Query("date")})
 	if err != nil {
 		return mapError(c, err)
 	}
@@ -80,6 +81,7 @@ func mapError(c *fiber.Ctx, err error) error {
 	if errors.As(err, &validationError) {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", validationError.Message)
 	}
+	log.Printf("incidents: request %v failed: %v", c.Locals("requestid"), err)
 	return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Une erreur interne est survenue.")
 }
 

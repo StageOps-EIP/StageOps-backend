@@ -33,6 +33,7 @@ type doc struct {
 	Severity        string     `json:"severity"`
 	Status          string     `json:"status"`
 	EquipmentID     string     `json:"equipment_id,omitempty"`
+	Date            string     `json:"date,omitempty"`
 	ReportedBy      string     `json:"reported_by"`
 	ResolvedAt      *time.Time `json:"resolved_at,omitempty"`
 	ResolutionNotes string     `json:"resolution_notes,omitempty"`
@@ -51,6 +52,7 @@ type Incident struct {
 	Severity        string     `json:"severity"`
 	Status          string     `json:"status"`
 	EquipmentID     string     `json:"equipment_id,omitempty"`
+	Date            string     `json:"date"`
 	ReportedBy      string     `json:"reported_by"`
 	ResolvedAt      *time.Time `json:"resolved_at,omitempty"`
 	ResolutionNotes string     `json:"resolution_notes,omitempty"`
@@ -65,6 +67,7 @@ type Input struct {
 	Severity        string     `json:"severity"`
 	Status          string     `json:"status"`
 	EquipmentID     string     `json:"equipment_id"`
+	Date            string     `json:"date"`
 	ResolvedAt      *time.Time `json:"resolved_at"`
 	ResolutionNotes string     `json:"resolution_notes"`
 	Images          []string   `json:"images"`
@@ -78,9 +81,22 @@ func toPublic(d *doc) *Incident {
 	return &Incident{
 		ID: d.ID, TheatreID: d.TheatreID, ProjectID: d.ProjectID, Module: d.Module, Title: d.Title,
 		Description: d.Description, Severity: d.Severity, Status: d.Status,
-		EquipmentID: d.EquipmentID, ReportedBy: d.ReportedBy, ResolvedAt: d.ResolvedAt,
+		EquipmentID: d.EquipmentID, Date: d.day(), ReportedBy: d.ReportedBy, ResolvedAt: d.ResolvedAt,
 		ResolutionNotes: d.ResolutionNotes, Images: d.Images, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
 	}
+}
+
+// day returns the operating date of the incident. Incidents stored before the
+// field existed fall back to the UTC day of their creation.
+func (d *doc) day() string {
+	if d.Date != "" {
+		return d.Date
+	}
+	return d.CreatedAt.UTC().Format(time.DateOnly)
+}
+
+func isActive(status string) bool {
+	return status == "open" || status == "in-progress"
 }
 
 func toPublicSlice(docs []doc) []Incident {
