@@ -122,6 +122,7 @@ Toutes les routes protégées attendent `Authorization: Bearer <token>`.
 | `GET, DELETE` | `/api/auth/devices[/:id]` | authentifié |
 | `POST` | `/api/auth/offline-grants` | authentifié |
 | `GET` | `/.well-known/jwks.json` | public |
+| `GET` | `/api/users?limit=&offset=` | RG, utilisateurs du théâtre triés par email (50 par défaut, 200 max) |
 | `PATCH` | `/api/users/:id/role` | RG |
 | `PATCH` | `/api/users/:id/modules` | RG |
 | `GET, POST` | `/api/projects/` | lecture authentifiée, création RG |
@@ -133,7 +134,7 @@ Toutes les routes protégées attendent `Authorization: Bearer <token>`.
 | `GET` | `/api/health/live` | public, processus HTTP |
 | `GET` | `/api/health/ready` | public, processus et CouchDB |
 
-Les mutations de matériel et d'incidents sont bloquées quand le module correspondant est inactif dans le projet. Les erreurs suivent cette enveloppe :
+Les mutations de matériel et d'incidents sont bloquées quand le module correspondant est inactif dans le projet. Les listes de matériel et d'incidents acceptent `?date=YYYY-MM-DD` pour n'afficher que ce qui est visible ce jour-là ; un incident lié à un équipement met à jour son statut (`ok` ↔ `to-check`). Les champs sont décrits dans [`docs/domain-model.md`](docs/domain-model.md). Les erreurs suivent cette enveloppe :
 
 ```json
 {
