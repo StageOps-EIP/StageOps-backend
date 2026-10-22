@@ -47,6 +47,8 @@ type doc struct {
 	ResponsiblePerson string     `json:"responsible_person,omitempty"`
 	LastCheck         *time.Time `json:"last_check,omitempty"`
 	Position          *Position  `json:"position,omitempty"`
+	AvailableFrom     string     `json:"available_from,omitempty"`
+	AvailableTo       string     `json:"available_to,omitempty"`
 	DMXUniverse       *int       `json:"dmx_universe,omitempty"`
 	DMXAddress        *int       `json:"dmx_address,omitempty"`
 	DMXChannels       int        `json:"dmx_channels,omitempty"`
@@ -69,6 +71,8 @@ type Equipment struct {
 	ResponsiblePerson string     `json:"responsible_person,omitempty"`
 	LastCheck         *time.Time `json:"last_check,omitempty"`
 	Position          *Position  `json:"position,omitempty"`
+	AvailableFrom     string     `json:"available_from,omitempty"`
+	AvailableTo       string     `json:"available_to,omitempty"`
 	DMXUniverse       *int       `json:"dmx_universe,omitempty"`
 	DMXAddress        *int       `json:"dmx_address,omitempty"`
 	DMXChannels       int        `json:"dmx_channels,omitempty"`
@@ -87,6 +91,8 @@ type Input struct {
 	ResponsiblePerson string     `json:"responsible_person"`
 	LastCheck         *time.Time `json:"last_check"`
 	Position          *Position  `json:"position"`
+	AvailableFrom     string     `json:"available_from"`
+	AvailableTo       string     `json:"available_to"`
 	DMXUniverse       *int       `json:"dmx_universe"`
 	DMXAddress        *int       `json:"dmx_address"`
 	DMXChannels       int        `json:"dmx_channels"`
@@ -102,6 +108,7 @@ func toPublic(d *doc) *Equipment {
 		ID: d.ID, TheatreID: d.TheatreID, ProjectID: d.ProjectID, Module: d.Module, Name: d.Name, Kind: d.Kind,
 		QRCode: d.QRCode, Status: d.Status, Location: d.Location, Zone: d.Zone,
 		ResponsiblePerson: d.ResponsiblePerson, LastCheck: d.LastCheck, Position: d.Position,
+		AvailableFrom: d.AvailableFrom, AvailableTo: d.AvailableTo,
 		DMXUniverse: d.DMXUniverse, DMXAddress: d.DMXAddress, DMXChannels: d.DMXChannels,
 		Notes: d.Notes, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
 	}

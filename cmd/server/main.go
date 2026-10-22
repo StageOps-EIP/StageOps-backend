@@ -142,7 +142,8 @@ func run() error {
 	projectService := projects.NewService(projects.NewCouchDBRepository(sharedCouchCfg), auditRepo)
 	projectHandler := projects.NewHandler(projectService)
 
-	equipmentHandler := equipment.NewHandler(equipment.NewService(equipment.NewRepository(sharedCouchCfg), auditRepo))
+	equipmentService := equipment.NewService(equipment.NewRepository(sharedCouchCfg), auditRepo, projectService)
+	equipmentHandler := equipment.NewHandler(equipmentService)
 	eventsHandler := events.NewHandler(events.NewService(events.NewRepository(sharedCouchCfg)))
 	incidentsHandler := incidents.NewHandler(incidents.NewService(incidents.NewRepository(sharedCouchCfg), auditRepo))
 	teamHandler := team.NewHandler(team.NewService(team.NewRepository(sharedCouchCfg)))
