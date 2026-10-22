@@ -139,6 +139,24 @@ func (s *Service) IsModuleActive(ctx context.Context, projectID, moduleName stri
 	}
 }
 
+// DateRange returns the inclusive operating dates of a project. Equipment and
+// incidents use it to decide on which dates they are visible.
+func (s *Service) DateRange(ctx context.Context, projectID string) (time.Time, time.Time, error) {
+	project, err := s.repo.FindByID(ctx, projectID)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	start, err := time.Parse(time.DateOnly, project.StartDate)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("parsing start date of %s: %w", projectID, err)
+	}
+	end, err := time.Parse(time.DateOnly, project.EndDate)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("parsing end date of %s: %w", projectID, err)
+	}
+	return start, end, nil
+}
+
 func validateCreate(input CreateInput) error {
 	project := &Project{
 		Name:      strings.TrimSpace(input.Name),

@@ -187,6 +187,74 @@ func TestServiceIsModuleActiveSupportsDomainAliases(t *testing.T) {
 	assert.ErrorAs(t, err, &validationError)
 }
 
+func TestServiceCreateRequiresNameVenueAndDates(t *testing.T) {
+	repo := &repositoryMock{createFn: func(context.Context, *Project) error {
+		t.Fatal("repository must not be called")
+		return nil
+	}}
+	valid := CreateInput{Name: "Festival", Venue: "Arena", StartDate: "2027-06-10", EndDate: "2027-06-12"}
+	cases := map[string]func(*CreateInput){
+		"blank name":       func(input *CreateInput) { input.Name = "   " },
+		"blank venue":      func(input *CreateInput) { input.Venue = "" },
+		"missing start":    func(input *CreateInput) { input.StartDate = "" },
+		"malformed end":    func(input *CreateInput) { input.EndDate = "12/06/2027" },
+		"impossible date":  func(input *CreateInput) { input.StartDate = "2027-02-30" },
+		"end before start": func(input *CreateInput) { input.EndDate = "2027-06-09" },
+	}
+
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			input := valid
+			mutate(&input)
+
+			_, err := NewService(repo, nil).Create(tenant.WithTheatreID(context.Background(), "theatre::one"), input, "user::1", "rg")
+
+			var validationError *ValidationError
+			assert.ErrorAs(t, err, &validationError)
+		})
+	}
+}
+
+func TestServiceCreateKeepsCustomModuleSelection(t *testing.T) {
+	var stored *Project
+	repo := &repositoryMock{createFn: func(_ context.Context, project *Project) error {
+		stored = project
+		return nil
+	}}
+
+	result, err := NewService(repo, nil).Create(tenant.WithTheatreID(context.Background(), "theatre::one"), CreateInput{
+		Name: "Concert", Venue: "Zénith", StartDate: "2027-06-10", EndDate: "2027-06-10",
+		ModulesConfig: &ModulesConfig{Lighting: true, Audio: false, Stage: false},
+	}, "user::1", "rg")
+
+	require.NoError(t, err)
+	assert.Equal(t, ModulesConfig{Lighting: true}, stored.ModulesConfig)
+	assert.Equal(t, ModulesConfig{Lighting: true}, result.ModulesConfig)
+	assert.Equal(t, "theatre::one", stored.TheatreID)
+}
+
+func TestServiceDateRange(t *testing.T) {
+	repo := &repositoryMock{findFn: func(context.Context, string) (*Project, error) {
+		return validProject(), nil
+	}}
+
+	start, end, err := NewService(repo, nil).DateRange(context.Background(), "project::1")
+
+	require.NoError(t, err)
+	assert.Equal(t, time.Date(2027, 6, 10, 0, 0, 0, 0, time.UTC), start)
+	assert.Equal(t, time.Date(2027, 6, 12, 0, 0, 0, 0, time.UTC), end)
+}
+
+func TestServiceDateRangePropagatesNotFound(t *testing.T) {
+	repo := &repositoryMock{findFn: func(context.Context, string) (*Project, error) {
+		return nil, ErrNotFound
+	}}
+
+	_, _, err := NewService(repo, nil).DateRange(context.Background(), "project::missing")
+
+	assert.ErrorIs(t, err, ErrNotFound)
+}
+
 func validProject() *Project {
 	return &Project{
 		ID:        "project::1",
