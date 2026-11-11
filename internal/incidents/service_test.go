@@ -30,18 +30,32 @@ func (m *repositoryMock) FindByID(_ context.Context, id string) (*doc, error) {
 	return nil, ErrNotFound
 }
 
+// The mock keeps its documents up to date so that reads made after a write see it.
 func (m *repositoryMock) Create(_ context.Context, incident *doc) error {
 	m.created = incident
+	m.docs = append(m.docs, *incident)
 	return nil
 }
 
 func (m *repositoryMock) Update(_ context.Context, incident *doc) error {
 	m.updated = incident
+	for i := range m.docs {
+		if m.docs[i].ID == incident.ID {
+			m.docs[i] = *incident
+		}
+	}
 	return nil
 }
 
 func (m *repositoryMock) Delete(_ context.Context, id, rev string) error {
 	m.deletedID, m.deletedRev = id, rev
+	remaining := make([]doc, 0, len(m.docs))
+	for _, existing := range m.docs {
+		if existing.ID != id {
+			remaining = append(remaining, existing)
+		}
+	}
+	m.docs = remaining
 	return nil
 }
 
@@ -70,7 +84,7 @@ func TestServiceGetRejectsIncidentOutsideScope(t *testing.T) {
 
 func TestServiceCreateUsesAuthenticatedReporter(t *testing.T) {
 	repo := &repositoryMock{}
-	input := Input{Title: "Panne", Description: "Le projecteur ne répond plus", Severity: "high"}
+	input := Input{Title: "Panne", Description: "Le projecteur ne répond plus", Severity: "high", Date: "2027-06-11"}
 
 	result, err := NewService(repo, nil, nil, nil).Create(tenant.WithTheatreID(context.Background(), "theatre::one"), "project::1", "lighting", input, "user::1", "lumiere")
 
@@ -152,15 +166,28 @@ func scopedContext() context.Context {
 	return tenant.WithTheatreID(context.Background(), "theatre::one")
 }
 
-func TestServiceCreateDefaultsDateToToday(t *testing.T) {
+func TestServiceCreateRequiresDate(t *testing.T) {
 	repo := &repositoryMock{}
 
-	result, err := NewService(repo, nil, nil, nil).Create(scopedContext(), "project::1", "lighting", Input{
+	_, err := NewService(repo, nil, festival, nil).Create(scopedContext(), "project::1", "lighting", Input{
 		Title: "Lampe grillée", Description: "Découpe 3", Severity: "low",
 	}, "user::1", "lumiere")
 
+	var validationError *ValidationError
+	require.ErrorAs(t, err, &validationError)
+	assert.Contains(t, validationError.Message, "'date'")
+	assert.Nil(t, repo.created)
+}
+
+func TestServiceCreateStoresDateAndTimestamps(t *testing.T) {
+	repo := &repositoryMock{}
+
+	result, err := NewService(repo, nil, festival, nil).Create(scopedContext(), "project::1", "lighting", Input{
+		Title: "Lampe grillée", Description: "Découpe 3", Severity: "low", Date: "2027-06-12",
+	}, "user::1", "lumiere")
+
 	require.NoError(t, err)
-	assert.Equal(t, time.Now().UTC().Format(time.DateOnly), result.Date)
+	assert.Equal(t, "2027-06-12", result.Date)
 	assert.Equal(t, "open", result.Status)
 	assert.Nil(t, result.ResolvedAt)
 	assert.WithinDuration(t, time.Now().UTC(), result.CreatedAt, time.Second)
@@ -327,4 +354,88 @@ func TestServiceListRejectsMalformedDate(t *testing.T) {
 
 	var validationError *ValidationError
 	assert.ErrorAs(t, err, &validationError)
+}
+
+func TestServiceUpdateAcceptsUnchangedDateOutsideProject(t *testing.T) {
+	cases := map[string]doc{
+		"reported during load-in": {Date: "2027-06-08"},
+		"legacy without date":     {CreatedAt: time.Date(2027, 5, 30, 9, 0, 0, 0, time.UTC)},
+	}
+
+	for name, stored := range cases {
+		t.Run(name, func(t *testing.T) {
+			stored.ID, stored.Type, stored.ProjectID, stored.Module, stored.Status = "incident::1", docType, "project::1", "audio", "open"
+			repo := &repositoryMock{docs: []doc{stored}}
+
+			result, err := NewService(repo, nil, festival, nil).Update(scopedContext(), "project::1", "audio", "incident::1", Input{
+				Title: "Larsen", Description: "Réglé avant l'ouverture", Severity: "medium", Status: "closed",
+			}, "user::1", "son")
+
+			require.NoError(t, err)
+			assert.Equal(t, "closed", result.Status)
+			assert.Equal(t, stored.day(), result.Date)
+		})
+	}
+}
+
+func TestServiceUpdateValidatesChangedDate(t *testing.T) {
+	repo := &repositoryMock{docs: []doc{{
+		ID: "incident::1", Type: docType, ProjectID: "project::1", Module: "audio", Status: "open", Date: "2027-06-11",
+	}}}
+
+	_, err := NewService(repo, nil, festival, nil).Update(scopedContext(), "project::1", "audio", "incident::1", Input{
+		Title: "Larsen", Description: "Retour scène", Severity: "medium", Date: "2027-06-20",
+	}, "user::1", "son")
+
+	var validationError *ValidationError
+	assert.ErrorAs(t, err, &validationError)
+	assert.Nil(t, repo.updated)
+}
+
+func TestServiceUpdateKeepsResolutionDateWhenOmitted(t *testing.T) {
+	resolvedAt := time.Date(2027, 6, 11, 22, 0, 0, 0, time.UTC)
+	repo := &repositoryMock{docs: []doc{{
+		ID: "incident::1", Type: docType, ProjectID: "project::1", Module: "lighting",
+		Status: "resolved", ResolvedAt: &resolvedAt, Date: "2027-06-11",
+	}}}
+
+	result, err := NewService(repo, nil, festival, nil).Update(scopedContext(), "project::1", "lighting", "incident::1", Input{
+		Title: "Lyre bloquée", Description: "Faute de frappe corrigée", Severity: "medium", Status: "closed",
+	}, "user::1", "lumiere")
+
+	require.NoError(t, err)
+	require.NotNil(t, result.ResolvedAt)
+	assert.Equal(t, resolvedAt, *result.ResolvedAt)
+}
+
+// concurrentResolveRepository simulates another request resolving the second
+// incident of the same equipment between this request's first read and its write.
+type concurrentResolveRepository struct {
+	*repositoryMock
+	otherID string
+}
+
+func (r *concurrentResolveRepository) Update(ctx context.Context, incident *doc) error {
+	for i := range r.docs {
+		if r.docs[i].ID == r.otherID {
+			r.docs[i].Status = "resolved"
+		}
+	}
+	return r.repositoryMock.Update(ctx, incident)
+}
+
+func TestServiceUpdateSeesIncidentResolvedConcurrently(t *testing.T) {
+	repo := &concurrentResolveRepository{otherID: "incident::2", repositoryMock: &repositoryMock{docs: []doc{
+		{ID: "incident::1", Type: docType, ProjectID: "project::1", Module: "audio", Status: "open", EquipmentID: "equipment::hf1", Date: "2027-06-11"},
+		{ID: "incident::2", Type: docType, ProjectID: "project::1", Module: "audio", Status: "open", EquipmentID: "equipment::hf1", Date: "2027-06-11"},
+	}}}
+	linker := &equipmentMock{known: map[string]bool{"equipment::hf1": true}}
+
+	_, err := NewService(repo, nil, festival, linker).Update(scopedContext(), "project::1", "audio", "incident::1", Input{
+		Title: "HF muet", Description: "Pile changée", Severity: "high", Status: "resolved", EquipmentID: "equipment::hf1",
+	}, "user::1", "son")
+
+	require.NoError(t, err)
+	assert.Equal(t, []stateChange{{"equipment::hf1", true, false}}, linker.changes,
+		"the state after the write is read again, so the equipment is released")
 }

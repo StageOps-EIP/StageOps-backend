@@ -80,12 +80,13 @@ func (s *Service) Get(ctx context.Context, projectID, module, id string) (*Incid
 }
 
 func (s *Service) Create(ctx context.Context, projectID, module string, input Input, authorID, authorRole string) (*Incident, error) {
-	now := time.Now().UTC()
-	if input.Date == "" {
-		input.Date = now.Format(time.DateOnly)
-	}
 	if err := validateInput(projectID, module, input); err != nil {
 		return nil, err
+	}
+	// The server cannot guess the theatre's operating day (time zone, shows
+	// running past midnight), so the client always states it.
+	if input.Date == "" {
+		return nil, &ValidationError{Message: "Le champ 'date' est requis (YYYY-MM-DD)."}
 	}
 	if err := s.validateDate(ctx, projectID, input.Date); err != nil {
 		return nil, err
@@ -104,6 +105,7 @@ func (s *Service) Create(ctx context.Context, projectID, module string, input In
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now().UTC()
 	incident := &doc{
 		ID: fmt.Sprintf("incident::%s", uuid.NewString()), Type: docType,
 		TheatreID: theatreID,
@@ -117,7 +119,7 @@ func (s *Service) Create(ctx context.Context, projectID, module string, input In
 		return nil, err
 	}
 	s.log(ctx, audit.ActionIncidentReported, authorID, authorRole, incident)
-	s.syncEquipment(ctx, projectID, module, before, withDoc(before, incident), authorID, authorRole, incident.EquipmentID)
+	s.syncEquipment(ctx, projectID, module, before, authorID, authorRole, incident.EquipmentID)
 	return toPublic(incident), nil
 }
 
@@ -132,8 +134,15 @@ func (s *Service) Update(ctx context.Context, projectID, module, id string, inpu
 	if err := validateInput(projectID, module, input); err != nil {
 		return nil, err
 	}
-	if err := s.validateDate(ctx, projectID, input.Date); err != nil {
-		return nil, err
+	// An unchanged date stays valid even if it is outside the project dates
+	// (incident reported during load-in, legacy incident, project dates moved).
+	if input.Date != incident.day() {
+		if err := s.validateDate(ctx, projectID, input.Date); err != nil {
+			return nil, err
+		}
+	}
+	if input.ResolvedAt == nil {
+		input.ResolvedAt = incident.ResolvedAt
 	}
 	// An unchanged link stays valid even if the equipment was deleted since.
 	if input.EquipmentID != incident.EquipmentID {
@@ -159,7 +168,7 @@ func (s *Service) Update(ctx context.Context, projectID, module, id string, inpu
 		return nil, err
 	}
 	s.log(ctx, "INCIDENT_UPDATED", authorID, authorRole, incident)
-	s.syncEquipment(ctx, projectID, module, before, withDoc(before, incident), authorID, authorRole, previousEquipmentID, incident.EquipmentID)
+	s.syncEquipment(ctx, projectID, module, before, authorID, authorRole, previousEquipmentID, incident.EquipmentID)
 	return toPublic(incident), nil
 }
 
@@ -176,7 +185,7 @@ func (s *Service) Delete(ctx context.Context, projectID, module, id, authorID, a
 		return err
 	}
 	s.log(ctx, "INCIDENT_DELETED", authorID, authorRole, incident)
-	s.syncEquipment(ctx, projectID, module, before, withoutDoc(before, incident.ID), authorID, authorRole, incident.EquipmentID)
+	s.syncEquipment(ctx, projectID, module, before, authorID, authorRole, incident.EquipmentID)
 	return nil
 }
 
@@ -245,8 +254,15 @@ func (s *Service) linkedIncidents(ctx context.Context, projectID, module string,
 
 // syncEquipment is best effort: the incident is already stored, so a failure
 // to update the equipment status is logged instead of failing the request.
-func (s *Service) syncEquipment(ctx context.Context, projectID, module string, before, after []doc, authorID, authorRole string, equipmentIDs ...string) {
-	if s.equipment == nil {
+// The current state is read again after the write, so that two incidents of
+// the same equipment closed at the same time both see the other one closed.
+func (s *Service) syncEquipment(ctx context.Context, projectID, module string, before []doc, authorID, authorRole string, equipmentIDs ...string) {
+	if s.equipment == nil || !anyNonEmpty(equipmentIDs) {
+		return
+	}
+	after, err := s.linkedIncidents(ctx, projectID, module, equipmentIDs...)
+	if err != nil {
+		log.Printf("incidents: reading incidents to update equipment status: %v", err)
 		return
 	}
 	seen := map[string]bool{}
@@ -269,20 +285,6 @@ func hasActiveIncident(docs []doc, equipmentID string) bool {
 		}
 	}
 	return false
-}
-
-func withDoc(docs []doc, incident *doc) []doc {
-	return append(withoutDoc(docs, incident.ID), *incident)
-}
-
-func withoutDoc(docs []doc, id string) []doc {
-	result := make([]doc, 0, len(docs)+1)
-	for _, existing := range docs {
-		if existing.ID != id {
-			result = append(result, existing)
-		}
-	}
-	return result
 }
 
 func anyNonEmpty(values []string) bool {
