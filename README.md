@@ -296,7 +296,7 @@ curl --fail-with-body --silent --show-error \
   }'
 ```
 
-Pour les incidents, les gravités sont `low`, `medium`, `high`, `critical` et les statuts sont `open`, `in-progress`, `resolved`, `closed`. Le champ `date` (jour d’exploitation) doit être compris dans les dates du projet ; sans lui, la date du jour est utilisée.
+Pour les incidents, les gravités sont `low`, `medium`, `high`, `critical` et les statuts sont `open`, `in-progress`, `resolved`, `closed`. Le champ `date` (jour d’exploitation, `YYYY-MM-DD`) est obligatoire à la création et doit être compris dans les dates du projet.
 
 ## Rôles, modules et isolation des données
 
@@ -373,7 +373,7 @@ Pour `refresh` et `logout`, le corps est `{"refresh_token":"<valeur>"}`. Les rou
 
 Les règles de module actif et d’attribution décrites plus haut s’appliquent à ces routes.
 
-Les listes de matériel et d’incidents acceptent `?date=YYYY-MM-DD` pour n’afficher que ce qui est visible ce jour-là : fenêtre `available_from`/`available_to` du matériel, champ `date` de l’incident (compris dans les dates du projet, aujourd’hui par défaut). Un incident actif lié à un équipement fait passer celui-ci de `ok` à `to-check`, et il redevient `ok` quand son dernier incident actif est résolu ou clos. Les champs sont décrits dans [`docs/domain-model.md`](docs/domain-model.md).
+Les listes de matériel et d’incidents acceptent `?date=YYYY-MM-DD` pour n’afficher que ce qui est visible ce jour-là : fenêtre `available_from`/`available_to` du matériel, champ `date` de l’incident (obligatoire à la création, compris dans les dates du projet). Un incident actif lié à un équipement fait passer celui-ci de `ok` à `to-check`, et il redevient `ok` quand son dernier incident actif est résolu ou clos. Les champs sont décrits dans [`docs/domain-model.md`](docs/domain-model.md).
 
 ### Événements, équipes et santé
 
