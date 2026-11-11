@@ -13,9 +13,11 @@ import (
 
 type serviceMock struct {
 	createFn func(context.Context, string, string, Input, string, string) (*Equipment, error)
+	filter   ListFilter
 }
 
-func (m *serviceMock) List(context.Context, string, string) ([]Equipment, error) {
+func (m *serviceMock) List(_ context.Context, _, _ string, filter ListFilter) ([]Equipment, error) {
+	m.filter = filter
 	return []Equipment{}, nil
 }
 
@@ -92,4 +94,16 @@ func identity() fiber.Handler {
 		c.Locals("role", "lumiere")
 		return c.Next()
 	}
+}
+
+func TestHandlerListPassesDateFilter(t *testing.T) {
+	service := &serviceMock{}
+	app := fiber.New()
+	app.Get("/projects/:projectId/equipment/:module", NewHandler(service).List)
+
+	resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, "/projects/project::1/equipment/lighting?date=2027-06-11", nil))
+
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	assert.Equal(t, ListFilter{Date: "2027-06-11"}, service.filter)
 }

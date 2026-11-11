@@ -2,6 +2,7 @@ package projects
 
 import (
 	"errors"
+	"log"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -80,6 +81,7 @@ func mapError(c *fiber.Ctx, err error) error {
 	if errors.As(err, &validationError) {
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", validationError.Message)
 	}
+	log.Printf("projects: request %v failed: %v", c.Locals("requestid"), err)
 	return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Une erreur interne est survenue.")
 }
 

@@ -291,11 +291,12 @@ curl --fail-with-body --silent --show-error \
     "title": "Projecteur sans réponse",
     "description": "La lyre ne répond plus aux commandes DMX.",
     "severity": "high",
-    "status": "open"
+    "status": "open",
+    "date": "2026-11-03"
   }'
 ```
 
-Pour les incidents, les gravités sont `low`, `medium`, `high`, `critical` et les statuts sont `open`, `in-progress`, `resolved`, `closed`.
+Pour les incidents, les gravités sont `low`, `medium`, `high`, `critical` et les statuts sont `open`, `in-progress`, `resolved`, `closed`. Le champ `date` (jour d’exploitation, `YYYY-MM-DD`) est obligatoire à la création et doit être compris dans les dates du projet.
 
 ## Rôles, modules et isolation des données
 
@@ -308,7 +309,7 @@ Pour les incidents, les gravités sont `low`, `medium`, `high`, `critical` et le
 | Son | `son` | `audio` |
 | Plateau | `plateau` | `stage` |
 
-Un utilisateur possède un rôle et peut recevoir plusieurs modules dans `assigned_modules`. Par exemple, `{"assigned_modules":["lumiere","son"]}` permet de lui attribuer les deux domaines. Le RG peut modifier le rôle et les modules via les routes `/api/users/:id/role` et `/api/users/:id/modules`.
+Un utilisateur possède un rôle et peut recevoir plusieurs modules dans `assigned_modules`. Par exemple, `{"assigned_modules":["lumiere","son"]}` permet de lui attribuer les deux domaines. Le RG retrouve les comptes de son théâtre avec `GET /api/users`, puis modifie leur rôle et leurs modules via `/api/users/:id/role` et `/api/users/:id/modules`.
 
 ### Règles principales
 
@@ -351,6 +352,7 @@ Pour `refresh` et `logout`, le corps est `{"refresh_token":"<valeur>"}`. Les rou
 
 | Méthode | Route | Accès / usage |
 | --- | --- | --- |
+| `GET` | `/api/users?limit=&offset=` | RG ; utilisateurs du théâtre triés par email (50 par défaut, 200 max). |
 | `PATCH` | `/api/users/:id/role` | RG ; `{"role":"son"}` par exemple. |
 | `PATCH` | `/api/users/:id/modules` | RG ; tableau `assigned_modules`. |
 | `GET` | `/api/modules/` | RG ; modules du théâtre. |
@@ -370,6 +372,8 @@ Pour `refresh` et `logout`, le corps est `{"refresh_token":"<valeur>"}`. Les rou
 | `GET`, `PATCH`, `DELETE` | `/api/projects/:projectId/incidents/:module/:id` | Lecture, modification ou suppression d’un incident. |
 
 Les règles de module actif et d’attribution décrites plus haut s’appliquent à ces routes.
+
+Les listes de matériel et d’incidents acceptent `?date=YYYY-MM-DD` pour n’afficher que ce qui est visible ce jour-là : fenêtre `available_from`/`available_to` du matériel, champ `date` de l’incident (obligatoire à la création, compris dans les dates du projet). Un incident actif lié à un équipement fait passer celui-ci de `ok` à `to-check`, et il redevient `ok` quand son dernier incident actif est résolu ou clos. Les champs sont décrits dans [`docs/domain-model.md`](docs/domain-model.md).
 
 ### Événements, équipes et santé
 

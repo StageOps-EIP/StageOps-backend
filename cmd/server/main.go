@@ -142,9 +142,10 @@ func run() error {
 	projectService := projects.NewService(projects.NewCouchDBRepository(sharedCouchCfg), auditRepo)
 	projectHandler := projects.NewHandler(projectService)
 
-	equipmentHandler := equipment.NewHandler(equipment.NewService(equipment.NewRepository(sharedCouchCfg), auditRepo))
+	equipmentService := equipment.NewService(equipment.NewRepository(sharedCouchCfg), auditRepo, projectService)
+	equipmentHandler := equipment.NewHandler(equipmentService)
 	eventsHandler := events.NewHandler(events.NewService(events.NewRepository(sharedCouchCfg)))
-	incidentsHandler := incidents.NewHandler(incidents.NewService(incidents.NewRepository(sharedCouchCfg), auditRepo))
+	incidentsHandler := incidents.NewHandler(incidents.NewService(incidents.NewRepository(sharedCouchCfg), auditRepo, projectService, equipmentService))
 	teamHandler := team.NewHandler(team.NewService(team.NewRepository(sharedCouchCfg)))
 
 	rateLimitResponse := func(c *fiber.Ctx) error {
@@ -193,6 +194,7 @@ func run() error {
 	authGroup.Delete("/devices/:id", authenticate, authHandler.RevokeDevice)
 
 	usersGroup := api.Group("/users", authenticate)
+	usersGroup.Get("/", auth.RequireRole(auth.RoleRG), authHandler.ListUsers)
 	usersGroup.Patch("/:id/role", auth.RequireRole(auth.RoleRG), authHandler.UpdateUserRole)
 	usersGroup.Patch("/:id/modules", auth.RequireRole(auth.RoleRG), authHandler.UpdateUserModules)
 

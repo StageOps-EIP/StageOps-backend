@@ -12,6 +12,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // --- Mock service ---
@@ -114,6 +115,14 @@ func (m *mockAuthService) UpdateUserRole(ctx context.Context, targetID, newRole,
 	return args.Get(0).(*UserPublic), args.Error(1)
 }
 
+func (m *mockAuthService) ListUsers(ctx context.Context, page UserPage) ([]UserPublic, error) {
+	args := m.Called(ctx, page)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]UserPublic), args.Error(1)
+}
+
 func (m *mockAuthService) UpdateUserModules(ctx context.Context, targetID string, assignedModules []string, authorID, authorRole string) (*UserPublic, error) {
 	args := m.Called(ctx, targetID, assignedModules, authorID, authorRole)
 	if args.Get(0) == nil {
@@ -146,6 +155,7 @@ func newTestApp(svc AuthService, jwtSecret string) *fiber.App {
 	authGroup.Post("/logout-all", JWTMiddleware(jwtSecret), h.LogoutAll)
 
 	usersGroup := api.Group("/users", JWTMiddleware(jwtSecret))
+	usersGroup.Get("/", RequireRole(RoleRG), h.ListUsers)
 	usersGroup.Patch("/:id/role", RequireRole(RoleRG), h.UpdateUserRole)
 	usersGroup.Patch("/:id/modules", RequireRole(RoleRG), h.UpdateUserModules)
 
@@ -533,4 +543,51 @@ func TestUpdateUserRoleHandler_NotFound(t *testing.T) {
 	errObj := decodeError(resp)
 	assert.Equal(t, "NOT_FOUND", errObj["code"])
 	svc.AssertExpectations(t)
+}
+
+func getWithToken(app *fiber.App, path, token string) *http.Response {
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, _ := app.Test(req)
+	return resp
+}
+
+func TestListUsersHandler_Success(t *testing.T) {
+	svc := new(mockAuthService)
+	app := newTestApp(svc, "test-secret")
+	svc.On("ListUsers", mock.Anything, UserPage{Limit: 10, Offset: 20}).
+		Return([]UserPublic{{ID: "user::a", Email: "a@example.com", Role: RoleSon, AssignedModules: []string{}}}, nil)
+	token, _ := generateToken("user::rg", "rg@example.com", RoleRG, "test-secret")
+
+	response := getWithToken(app, "/api/users?limit=10&offset=20", token)
+
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	var users []UserPublic
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&users))
+	require.Len(t, users, 1)
+	assert.Equal(t, "user::a", users[0].ID)
+	svc.AssertExpectations(t)
+}
+
+func TestListUsersHandler_ForbiddenForTechnicians(t *testing.T) {
+	svc := new(mockAuthService)
+	app := newTestApp(svc, "test-secret")
+	token, _ := generateToken("user::son", "son@example.com", RoleSon, "test-secret")
+
+	response := getWithToken(app, "/api/users", token)
+
+	assert.Equal(t, http.StatusForbidden, response.StatusCode)
+	svc.AssertNotCalled(t, "ListUsers", mock.Anything, mock.Anything)
+}
+
+func TestListUsersHandler_RejectsNonNumericPagination(t *testing.T) {
+	svc := new(mockAuthService)
+	app := newTestApp(svc, "test-secret")
+	token, _ := generateToken("user::rg", "rg@example.com", RoleRG, "test-secret")
+
+	response := getWithToken(app, "/api/users?limit=ten", token)
+
+	assert.Equal(t, http.StatusBadRequest, response.StatusCode)
+	assert.Equal(t, "VALIDATION_ERROR", decodeError(response)["code"])
+	svc.AssertNotCalled(t, "ListUsers", mock.Anything, mock.Anything)
 }
