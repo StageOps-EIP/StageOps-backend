@@ -32,6 +32,8 @@ type ListFilter struct {
 	Date string
 }
 
+const incidentStateCASRetries = 3
+
 type Service struct {
 	repo      Repository
 	auditRepo audit.Repository
@@ -90,7 +92,8 @@ func (s *Service) Create(ctx context.Context, projectID, module string, input In
 	if err := validateInput(projectID, module, &input); err != nil {
 		return nil, err
 	}
-	if err := s.validateAvailability(ctx, projectID, input); err != nil {
+	availableFrom, availableTo := resolveAvailability(input, "", "")
+	if err := s.validateAvailability(ctx, projectID, availableFrom, availableTo); err != nil {
 		return nil, err
 	}
 	docs, err := s.repo.List(ctx)
@@ -112,17 +115,13 @@ func (s *Service) Create(ctx context.Context, projectID, module string, input In
 	if input.LastCheck == nil {
 		input.LastCheck = &now
 	}
-	if input.Position == nil {
-		// New items appear at the stage origin until they are placed in 2D/3D.
-		input.Position = &Position{}
-	}
 	item := &doc{
 		ID: fmt.Sprintf("equipment::%s", uuid.NewString()), Type: docType,
 		TheatreID: theatreID,
 		ProjectID: projectID, Module: module, Name: strings.TrimSpace(input.Name), Kind: input.Kind,
 		QRCode: input.QRCode, Status: input.Status, Location: input.Location, Zone: input.Zone,
 		ResponsiblePerson: input.ResponsiblePerson, LastCheck: input.LastCheck, Position: input.Position,
-		AvailableFrom: input.AvailableFrom, AvailableTo: input.AvailableTo,
+		AvailableFrom: availableFrom, AvailableTo: availableTo,
 		DMXUniverse: input.DMXUniverse, DMXAddress: input.DMXAddress, DMXChannels: input.DMXChannels,
 		Notes: input.Notes, CreatedAt: now, UpdatedAt: now,
 	}
@@ -137,12 +136,16 @@ func (s *Service) Update(ctx context.Context, projectID, module, id string, inpu
 	if err := validateInput(projectID, module, &input); err != nil {
 		return nil, err
 	}
-	if err := s.validateAvailability(ctx, projectID, input); err != nil {
-		return nil, err
-	}
 	current, err := s.findInScope(ctx, projectID, module, id)
 	if err != nil {
 		return nil, err
+	}
+	// An unchanged window stays valid even if the project dates moved since.
+	availableFrom, availableTo := resolveAvailability(input, current.AvailableFrom, current.AvailableTo)
+	if availableFrom != current.AvailableFrom || availableTo != current.AvailableTo {
+		if err := s.validateAvailability(ctx, projectID, availableFrom, availableTo); err != nil {
+			return nil, err
+		}
 	}
 	docs, err := s.repo.List(ctx)
 	if err != nil {
@@ -160,7 +163,7 @@ func (s *Service) Update(ctx context.Context, projectID, module, id string, inpu
 	current.Name, current.Kind, current.QRCode = strings.TrimSpace(input.Name), input.Kind, input.QRCode
 	current.Status, current.Location, current.Zone = input.Status, input.Location, input.Zone
 	current.ResponsiblePerson, current.LastCheck, current.Position = input.ResponsiblePerson, input.LastCheck, input.Position
-	current.AvailableFrom, current.AvailableTo = input.AvailableFrom, input.AvailableTo
+	current.AvailableFrom, current.AvailableTo = availableFrom, availableTo
 	current.DMXUniverse, current.DMXAddress, current.DMXChannels = input.DMXUniverse, input.DMXAddress, input.DMXChannels
 	current.Notes, current.UpdatedAt = input.Notes, time.Now().UTC()
 	if err := s.repo.Update(ctx, current); err != nil {
@@ -195,28 +198,39 @@ func (s *Service) Exists(ctx context.Context, projectID, module, id string) (boo
 // with the same rule as the web workspace: an active incident moves an "ok" item
 // to "to-check", and the item is "ok" again once its last active incident ends.
 // Items marked "hs" or "repair" by a technician are never changed automatically.
+//
+// CouchDB conflicts are retried from the latest stored revision so a
+// concurrent edit of the equipment does not lose the status change.
 func (s *Service) ApplyIncidentState(ctx context.Context, projectID, module, id string, hadActive, hasActive bool, authorID, authorRole string) error {
-	current, err := s.findInScope(ctx, projectID, module, id)
-	if err != nil {
-		return err
+	var err error
+	for attempt := 0; attempt < incidentStateCASRetries; attempt++ {
+		var current *doc
+		current, err = s.findInScope(ctx, projectID, module, id)
+		if err != nil {
+			return err
+		}
+		next := current.Status
+		switch {
+		case current.Status == "hs" || current.Status == "repair":
+		case hasActive && current.Status == "ok":
+			next = "to-check"
+		case !hasActive && hadActive && current.Status == "to-check":
+			next = "ok"
+		}
+		if next == current.Status {
+			return nil
+		}
+		current.Status, current.UpdatedAt = next, time.Now().UTC()
+		err = s.repo.Update(ctx, current)
+		if err == nil {
+			s.log(ctx, audit.ActionMaterialUpdated, authorID, authorRole, current)
+			return nil
+		}
+		if !errors.Is(err, ErrConflict) {
+			return err
+		}
 	}
-	next := current.Status
-	switch {
-	case current.Status == "hs" || current.Status == "repair":
-	case hasActive && current.Status == "ok":
-		next = "to-check"
-	case !hasActive && hadActive && current.Status == "to-check":
-		next = "ok"
-	}
-	if next == current.Status {
-		return nil
-	}
-	current.Status, current.UpdatedAt = next, time.Now().UTC()
-	if err := s.repo.Update(ctx, current); err != nil {
-		return err
-	}
-	s.log(ctx, audit.ActionMaterialUpdated, authorID, authorRole, current)
-	return nil
+	return err
 }
 
 func (s *Service) withinProject(ctx context.Context, projectID string, days ...string) (bool, error) {
@@ -236,11 +250,27 @@ func (s *Service) withinProject(ctx context.Context, projectID string, days ...s
 	return true, nil
 }
 
-func (s *Service) validateAvailability(ctx context.Context, projectID string, input Input) error {
-	if input.AvailableFrom == "" && input.AvailableTo == "" {
+// resolveAvailability applies the input on top of the stored window: an
+// omitted bound keeps the stored one and an empty string clears it.
+func resolveAvailability(input Input, currentFrom, currentTo string) (string, string) {
+	from, to := currentFrom, currentTo
+	if input.AvailableFrom != nil {
+		from = *input.AvailableFrom
+	}
+	if input.AvailableTo != nil {
+		to = *input.AvailableTo
+	}
+	return from, to
+}
+
+func (s *Service) validateAvailability(ctx context.Context, projectID, from, to string) error {
+	if from == "" && to == "" {
 		return nil
 	}
-	inProject, err := s.withinProject(ctx, projectID, input.AvailableFrom, input.AvailableTo)
+	if err := validateAvailabilityWindow(from, to); err != nil {
+		return err
+	}
+	inProject, err := s.withinProject(ctx, projectID, from, to)
 	if err != nil {
 		return err
 	}
@@ -276,9 +306,6 @@ func validateInput(projectID, module string, input *Input) error {
 	}
 	if input.Status != "" && !validStatuses[input.Status] {
 		return ErrInvalidStatus
-	}
-	if err := validateAvailabilityWindow(input.AvailableFrom, input.AvailableTo); err != nil {
-		return err
 	}
 	if input.DMXUniverse != nil || input.DMXAddress != nil || input.DMXChannels != 0 {
 		if module != "lighting" {

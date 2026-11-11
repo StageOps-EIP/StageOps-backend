@@ -16,6 +16,8 @@ type repositoryMock struct {
 	updated    *doc
 	deletedID  string
 	deletedRev string
+	updateErrs []error
+	updates    int
 }
 
 func (m *repositoryMock) List(context.Context) ([]doc, error) { return m.docs, nil }
@@ -36,9 +38,19 @@ func (m *repositoryMock) Create(_ context.Context, item *doc) error {
 }
 
 func (m *repositoryMock) Update(_ context.Context, item *doc) error {
+	m.updates++
+	if len(m.updateErrs) > 0 {
+		err := m.updateErrs[0]
+		m.updateErrs = m.updateErrs[1:]
+		if err != nil {
+			return err
+		}
+	}
 	m.updated = item
 	return nil
 }
+
+func day(value string) *string { return &value }
 
 func (m *repositoryMock) Delete(_ context.Context, id, rev string) error {
 	m.deletedID, m.deletedRev = id, rev
@@ -146,7 +158,7 @@ func (m calendarMock) DateRange(context.Context, string) (time.Time, time.Time, 
 
 var festival = calendarMock{start: "2027-06-10", end: "2027-06-14"}
 
-func TestServiceCreatePlacesEquipmentAtOriginByDefault(t *testing.T) {
+func TestServiceCreateLeavesUnplacedEquipmentWithoutPosition(t *testing.T) {
 	repo := &repositoryMock{}
 
 	item, err := NewService(repo, nil, festival).Create(tenant.WithTheatreID(context.Background(), "theatre::one"), "project::1", "audio", Input{
@@ -154,7 +166,7 @@ func TestServiceCreatePlacesEquipmentAtOriginByDefault(t *testing.T) {
 	}, "user::1", "son")
 
 	require.NoError(t, err)
-	assert.Equal(t, &Position{X: 0, Y: 0, Z: 0}, item.Position)
+	assert.Nil(t, item.Position, "no position means not placed yet, which differs from placed at the origin")
 	assert.Equal(t, "ok", item.Status)
 	assert.Regexp(t, `^equipment::[0-9a-f-]{36}$`, item.ID)
 }
@@ -176,11 +188,11 @@ func TestServiceUpdateKeepsPositionWhenOmitted(t *testing.T) {
 
 func TestServiceCreateValidatesAvailabilityWindow(t *testing.T) {
 	cases := map[string]Input{
-		"malformed from":     {AvailableFrom: "10/06/2027"},
-		"impossible to":      {AvailableTo: "2027-06-31"},
-		"to before from":     {AvailableFrom: "2027-06-12", AvailableTo: "2027-06-11"},
-		"before the project": {AvailableFrom: "2027-06-09"},
-		"after the project":  {AvailableTo: "2027-06-15"},
+		"malformed from":     {AvailableFrom: day("10/06/2027")},
+		"impossible to":      {AvailableTo: day("2027-06-31")},
+		"to before from":     {AvailableFrom: day("2027-06-12"), AvailableTo: day("2027-06-11")},
+		"before the project": {AvailableFrom: day("2027-06-09")},
+		"after the project":  {AvailableTo: day("2027-06-15")},
 	}
 
 	for name, input := range cases {
@@ -201,7 +213,7 @@ func TestServiceCreateStoresAvailabilityWindow(t *testing.T) {
 	repo := &repositoryMock{}
 
 	item, err := NewService(repo, nil, festival).Create(tenant.WithTheatreID(context.Background(), "theatre::one"), "project::1", "audio", Input{
-		Name: "Console FOH", Kind: "console", AvailableFrom: "2027-06-11", AvailableTo: "2027-06-12",
+		Name: "Console FOH", Kind: "console", AvailableFrom: day("2027-06-11"), AvailableTo: day("2027-06-12"),
 	}, "user::1", "son")
 
 	require.NoError(t, err)
@@ -288,4 +300,85 @@ func TestServiceExists(t *testing.T) {
 	found, err = service.Exists(context.Background(), "project::1", "lighting", "equipment::1")
 	require.NoError(t, err)
 	assert.False(t, found, "equipment from another module is not linkable")
+}
+
+func windowedEquipment(from, to string) *repositoryMock {
+	return &repositoryMock{docs: []doc{{
+		ID: "equipment::1", Rev: "1-rev", Type: docType, ProjectID: "project::1", Module: "audio",
+		Name: "Console FOH", Kind: "console", Status: "ok", AvailableFrom: from, AvailableTo: to,
+	}}}
+}
+
+func TestServiceUpdateKeepsAvailabilityWhenOmitted(t *testing.T) {
+	repo := windowedEquipment("2027-06-11", "2027-06-12")
+
+	item, err := NewService(repo, nil, festival).Update(context.Background(), "project::1", "audio", "equipment::1", Input{
+		Name: "Console FOH", Kind: "console", Status: "to-check",
+	}, "user::1", "son")
+
+	require.NoError(t, err)
+	assert.Equal(t, "2027-06-11", item.AvailableFrom)
+	assert.Equal(t, "2027-06-12", item.AvailableTo)
+}
+
+func TestServiceUpdateClearsAvailabilityWithEmptyString(t *testing.T) {
+	repo := windowedEquipment("2027-06-11", "2027-06-12")
+
+	item, err := NewService(repo, nil, festival).Update(context.Background(), "project::1", "audio", "equipment::1", Input{
+		Name: "Console FOH", Kind: "console", AvailableTo: day(""),
+	}, "user::1", "son")
+
+	require.NoError(t, err)
+	assert.Equal(t, "2027-06-11", item.AvailableFrom)
+	assert.Empty(t, item.AvailableTo)
+}
+
+func TestServiceUpdateAcceptsUnchangedWindowOutsideProject(t *testing.T) {
+	// The project was shortened after the window was set.
+	repo := windowedEquipment("2027-06-01", "2027-06-20")
+
+	item, err := NewService(repo, nil, festival).Update(context.Background(), "project::1", "audio", "equipment::1", Input{
+		Name: "Console FOH", Kind: "console", Position: &Position{X: 3},
+		AvailableFrom: day("2027-06-01"), AvailableTo: day("2027-06-20"),
+	}, "user::1", "son")
+
+	require.NoError(t, err)
+	assert.Equal(t, &Position{X: 3}, item.Position)
+}
+
+func TestServiceUpdateValidatesChangedWindow(t *testing.T) {
+	repo := windowedEquipment("2027-06-11", "2027-06-12")
+
+	_, err := NewService(repo, nil, festival).Update(context.Background(), "project::1", "audio", "equipment::1", Input{
+		Name: "Console FOH", Kind: "console", AvailableTo: day("2027-06-20"),
+	}, "user::1", "son")
+
+	var validationError *ValidationError
+	assert.ErrorAs(t, err, &validationError)
+	assert.Nil(t, repo.updated)
+}
+
+func TestServiceApplyIncidentStateRetriesOnConflict(t *testing.T) {
+	repo := &repositoryMock{
+		docs:       []doc{{ID: "equipment::1", Type: docType, ProjectID: "project::1", Module: "audio", Status: "ok"}},
+		updateErrs: []error{ErrConflict, nil},
+	}
+
+	err := NewService(repo, nil, nil).ApplyIncidentState(context.Background(), "project::1", "audio", "equipment::1", false, true, "user::1", "son")
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, repo.updates)
+	assert.Equal(t, "to-check", repo.updated.Status)
+}
+
+func TestServiceApplyIncidentStateGivesUpAfterRepeatedConflicts(t *testing.T) {
+	repo := &repositoryMock{
+		docs:       []doc{{ID: "equipment::1", Type: docType, ProjectID: "project::1", Module: "audio", Status: "ok"}},
+		updateErrs: []error{ErrConflict, ErrConflict, ErrConflict, ErrConflict},
+	}
+
+	err := NewService(repo, nil, nil).ApplyIncidentState(context.Background(), "project::1", "audio", "equipment::1", false, true, "user::1", "son")
+
+	assert.ErrorIs(t, err, ErrConflict)
+	assert.Equal(t, incidentStateCASRetries, repo.updates)
 }

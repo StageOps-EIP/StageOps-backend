@@ -91,8 +91,8 @@ type Input struct {
 	ResponsiblePerson string     `json:"responsible_person"`
 	LastCheck         *time.Time `json:"last_check"`
 	Position          *Position  `json:"position"`
-	AvailableFrom     string     `json:"available_from"`
-	AvailableTo       string     `json:"available_to"`
+	AvailableFrom     *string    `json:"available_from"`
+	AvailableTo       *string    `json:"available_to"`
 	DMXUniverse       *int       `json:"dmx_universe"`
 	DMXAddress        *int       `json:"dmx_address"`
 	DMXChannels       int        `json:"dmx_channels"`
