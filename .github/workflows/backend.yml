@@ -95,3 +95,25 @@ jobs:
           COUCHDB_TEST_USER=stageops_admin \
           COUCHDB_TEST_PASSWORD=replace-with-at-least-32-random-characters \
             go test -race -tags=integration ./internal/auth
+
+          backup_dir=$(mktemp -d)
+          ENV_FILE="$PWD/.env.production.example" BACKUP_DIR="$backup_dir" sh ./deploy/backup.sh
+          set -- "$backup_dir"/stageops-couchdb-*.tar.gz
+          test "$#" -eq 1
+          test -s "$1"
+          test "$(stat -c '%a' "$1")" = 600
+
+          fixture_url="$couch_url/stageops/module::replace-with-theatre-id::son"
+          curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 \
+            --user "$couch_auth" "$fixture_url" \
+            | jq '.active = true' \
+            | curl --fail --silent --show-error --user "$couch_auth" --request PUT \
+              --header 'Content-Type: application/json' --data-binary @- "$fixture_url" >/dev/null
+          curl --fail --silent --show-error --user "$couch_auth" "$fixture_url" \
+            | jq -e '.active == true' >/dev/null
+
+          ENV_FILE="$PWD/.env.production.example" sh ./deploy/restore.sh "$1" --confirm
+          docker compose --env-file .env.production.example -f docker-compose.prod.yml exec --no-TTY couchdb \
+            curl --fail --silent --show-error --user "$couch_auth" \
+            http://127.0.0.1:5984/stageops/module::replace-with-theatre-id::son \
+            | jq -e '.active == false' >/dev/null

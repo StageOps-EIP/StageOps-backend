@@ -9,6 +9,8 @@ STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 ARCHIVE="stageops-couchdb-$STAMP.tar.gz"
 
 mkdir -p "$BACKUP_DIR"
+archive_path="$BACKUP_DIR/$ARCHIVE"
+temporary_archive=$(mktemp "$BACKUP_DIR/.$ARCHIVE.XXXXXX")
 
 restart_services() {
   if [ "${RESTART_SERVICES:-true}" != "true" ]; then
@@ -17,16 +19,21 @@ restart_services() {
 
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" start couchdb backend >/dev/null 2>&1 || true
 }
-trap restart_services EXIT INT TERM
+cleanup() {
+  rm -f -- "$temporary_archive"
+  restart_services
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo "Stopping the backend and CouchDB for a consistent volume snapshot..."
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" stop backend couchdb
 
 docker run --rm \
   -v stageops_couchdb_data:/data:ro \
-  -v "$BACKUP_DIR":/backup \
   alpine:3.22 \
-  tar -czf "/backup/$ARCHIVE" -C /data .
+  tar -czf - -C /data . >"$temporary_archive"
 
-chmod 600 "$BACKUP_DIR/$ARCHIVE"
-echo "Backup created (not encrypted): $BACKUP_DIR/$ARCHIVE"
+mv -- "$temporary_archive" "$archive_path"
+echo "Backup created (not encrypted): $archive_path"
