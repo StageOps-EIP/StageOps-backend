@@ -68,6 +68,18 @@ L'autorisation offline permet l'ouverture contrôlée de la base PouchDB locale.
 | `DELETE` | `/api/auth/devices/:id` | access token | révocation d'un appareil |
 | `GET` | `/.well-known/jwks.json` | public | clé Ed25519 publique |
 
+## Compatibilité avec le Web actuel
+
+Les réponses de connexion et d’inscription qui ouvrent une session incluent
+temporairement `token` comme alias de `access_token`. Les nouveaux clients
+doivent lire `access_token` et `refresh_token`. Retirer cet alias après la
+migration des clients.
+
+Lorsque l’inscription renvoie `{"status":"verification_required"}`, le client
+affiche l’étape de vérification sans appeler `/api/auth/me`. La validation du
+lien utilise `POST /api/auth/verify-email` avec le champ `token` et renvoie
+la paire canonique `access_token` / `refresh_token`.
+
 ## Persistance côté client
 
 Le client doit conserver le refresh token dans le stockage sécurisé de la plateforme, jamais dans une base PouchDB répliquée ni dans `localStorage` sur le web. Au redémarrage, il appelle `/api/auth/refresh`. L'access token reste en mémoire. Le grant offline et la clé publique JWKS peuvent être conservés avec les métadonnées de la base locale.

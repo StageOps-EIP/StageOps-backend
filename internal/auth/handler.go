@@ -38,7 +38,7 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 	if tokens == nil {
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{"status": "verification_required"})
 	}
-	return c.Status(fiber.StatusCreated).JSON(tokens)
+	return c.Status(fiber.StatusCreated).JSON(webCompatibleTokens(tokens))
 }
 
 // Login handles POST /api/auth/login.
@@ -56,7 +56,17 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 		return mapServiceError(c, err)
 	}
 
-	return c.Status(fiber.StatusOK).JSON(tokens)
+	return c.Status(fiber.StatusOK).JSON(webCompatibleTokens(tokens))
+}
+
+// Keep the old Web client's field until it can read access_token.
+type webTokenResponse struct {
+	*TokenPair
+	Token string `json:"token"`
+}
+
+func webCompatibleTokens(tokens *TokenPair) webTokenResponse {
+	return webTokenResponse{TokenPair: tokens, Token: tokens.AccessToken}
 }
 
 // Refresh handles POST /api/auth/refresh and rotates the supplied refresh token.

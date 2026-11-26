@@ -223,6 +223,7 @@ func TestRegisterHandler_Success(t *testing.T) {
 	var result map[string]string
 	json.NewDecoder(resp.Body).Decode(&result)
 	assert.Equal(t, "jwt.token.here", result["access_token"])
+	assert.Equal(t, result["access_token"], result["token"])
 	svc.AssertExpectations(t)
 }
 
@@ -289,7 +290,7 @@ func TestRegisterHandler_ReturnsVerificationRequired(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, resp.StatusCode)
 	var result map[string]string
 	json.NewDecoder(resp.Body).Decode(&result)
-	assert.Equal(t, "verification_required", result["status"])
+	assert.Equal(t, map[string]string{"status": "verification_required"}, result)
 }
 
 // --- Login ---
@@ -311,6 +312,7 @@ func TestLoginHandler_Success(t *testing.T) {
 	var result map[string]string
 	json.NewDecoder(resp.Body).Decode(&result)
 	assert.Equal(t, "jwt.token.here", result["access_token"])
+	assert.Equal(t, result["access_token"], result["token"])
 	svc.AssertExpectations(t)
 }
 
