@@ -114,13 +114,20 @@ class BusinessFlow(unittest.TestCase):
 
         incident_detail = f"{incident_path}/{incident_id}"
         resolved = self.request("PATCH", incident_detail, 200, token=technician,
-                                payload={**report, "status": "resolved"})
+                                payload={"status": "resolved"})
         self.assertEqual(resolved["status"], "resolved")
+        for field, value in report.items():
+            self.assertEqual(resolved[field], value)
         self.assertEqual(resolved["date"], "2026-11-25")
         self.assertTrue(resolved["resolved_at"])
         self.assertEqual(
             self.request("GET", equipment_detail, 200, token=admin)["status"], "ok"
         )
+
+        detached = self.request("PATCH", incident_detail, 200, token=technician,
+                                payload={"equipment_id": ""})
+        self.assertNotIn("equipment_id", detached)
+        self.assertEqual(detached["status"], "resolved")
 
         renewed = self.request("POST", "/auth/refresh", 200, payload={
             "refresh_token": technician_session["refresh_token"],

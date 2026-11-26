@@ -73,6 +73,26 @@ type Input struct {
 	Images          []string   `json:"images"`
 }
 
+// UpdateInput distinguishes omitted fields from explicitly supplied empty values.
+type UpdateInput struct {
+	Title           *string    `json:"title"`
+	Description     *string    `json:"description"`
+	Severity        *string    `json:"severity"`
+	Status          *string    `json:"status"`
+	EquipmentID     *string    `json:"equipment_id"`
+	Date            *string    `json:"date"`
+	ResolvedAt      *time.Time `json:"resolved_at"`
+	ResolutionNotes *string    `json:"resolution_notes"`
+	Images          *[]string  `json:"images"`
+}
+
+func valueOr[T any](value *T, fallback T) T {
+	if value != nil {
+		return *value
+	}
+	return fallback
+}
+
 type ValidationError struct{ Message string }
 
 func (e *ValidationError) Error() string { return e.Message }

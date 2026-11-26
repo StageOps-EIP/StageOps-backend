@@ -61,10 +61,10 @@ qui dépasse minuit) : le client l'envoie toujours à la création. La date n'es
 validée contre les dates du projet qu'à la création ou lorsqu'elle change ; un
 incident dont le jour est hors des dates du projet reste modifiable et clôturable.
 
-La modification via `PATCH` attend toujours `title`, `description` et
-`severity`. Pour résoudre un incident, envoyer ces champs, `status: "resolved"`
-et l’`equipment_id` existant si le lien doit être conservé. Le jour
-d’exploitation est conservé quand `date` est omis.
+Les champs omis lors d’un `PATCH` conservent leur valeur. Une résolution
+peut envoyer uniquement `{"status":"resolved"}`. Pour détacher le matériel,
+envoyer `{"equipment_id":""}`. Un tableau `images` vide supprime les images.
+Un champ JSON à `null` est traité comme un champ omis.
 
 ### Statut du matériel lié
 

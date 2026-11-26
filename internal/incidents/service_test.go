@@ -112,8 +112,8 @@ func TestServiceUpdateSetsResolutionDate(t *testing.T) {
 		Title: "Panne", Description: "Console", Severity: "high", Status: "open",
 	}}}
 
-	result, err := NewService(repo, nil, nil, nil).Update(context.Background(), "project::1", "audio", "incident::1", Input{
-		Title: "Panne", Description: "Console réparée", Severity: "high", Status: "resolved",
+	result, err := NewService(repo, nil, nil, nil).Update(context.Background(), "project::1", "audio", "incident::1", UpdateInput{
+		Title: new("Panne"), Description: new("Console réparée"), Severity: new("high"), Status: new("resolved"),
 	}, "user::1", "son")
 
 	require.NoError(t, err)
@@ -250,8 +250,8 @@ func TestServiceUpdateResolvingLastIncidentRestoresEquipment(t *testing.T) {
 	}}}
 	linker := &equipmentMock{known: map[string]bool{"equipment::hf1": true}}
 
-	result, err := NewService(repo, nil, festival, linker).Update(scopedContext(), "project::1", "audio", "incident::1", Input{
-		Title: "HF muet", Description: "Pile changée", Severity: "high", Status: "resolved", EquipmentID: "equipment::hf1",
+	result, err := NewService(repo, nil, festival, linker).Update(scopedContext(), "project::1", "audio", "incident::1", UpdateInput{
+		Title: new("HF muet"), Description: new("Pile changée"), Severity: new("high"), Status: new("resolved"), EquipmentID: new("equipment::hf1"),
 	}, "user::1", "son")
 
 	require.NoError(t, err)
@@ -267,8 +267,8 @@ func TestServiceUpdateKeepsFlagWhileAnotherIncidentIsActive(t *testing.T) {
 	}}
 	linker := &equipmentMock{known: map[string]bool{"equipment::hf1": true}}
 
-	_, err := NewService(repo, nil, festival, linker).Update(scopedContext(), "project::1", "audio", "incident::1", Input{
-		Title: "HF muet", Description: "Pile changée", Severity: "high", Status: "closed", EquipmentID: "equipment::hf1",
+	_, err := NewService(repo, nil, festival, linker).Update(scopedContext(), "project::1", "audio", "incident::1", UpdateInput{
+		Title: new("HF muet"), Description: new("Pile changée"), Severity: new("high"), Status: new("closed"), EquipmentID: new("equipment::hf1"),
 	}, "user::1", "son")
 
 	require.NoError(t, err)
@@ -282,8 +282,8 @@ func TestServiceUpdateMovingIncidentReconcilesBothEquipments(t *testing.T) {
 	}}}
 	linker := &equipmentMock{known: map[string]bool{"equipment::hf1": true, "equipment::hf2": true}}
 
-	_, err := NewService(repo, nil, festival, linker).Update(scopedContext(), "project::1", "audio", "incident::1", Input{
-		Title: "HF muet", Description: "C'était le HF 2", Severity: "high", EquipmentID: "equipment::hf2",
+	_, err := NewService(repo, nil, festival, linker).Update(scopedContext(), "project::1", "audio", "incident::1", UpdateInput{
+		Title: new("HF muet"), Description: new("C'était le HF 2"), Severity: new("high"), EquipmentID: new("equipment::hf2"),
 	}, "user::1", "son")
 
 	require.NoError(t, err)
@@ -297,8 +297,8 @@ func TestServiceUpdateAcceptsUnchangedLinkToDeletedEquipment(t *testing.T) {
 	}}}
 	linker := &equipmentMock{known: map[string]bool{}}
 
-	_, err := NewService(repo, nil, festival, linker).Update(scopedContext(), "project::1", "audio", "incident::1", Input{
-		Title: "HF muet", Description: "Matériel retiré", Severity: "low", Status: "closed", EquipmentID: "equipment::deleted",
+	_, err := NewService(repo, nil, festival, linker).Update(scopedContext(), "project::1", "audio", "incident::1", UpdateInput{
+		Title: new("HF muet"), Description: new("Matériel retiré"), Severity: new("low"), Status: new("closed"), EquipmentID: new("equipment::deleted"),
 	}, "user::1", "son")
 
 	require.NoError(t, err)
@@ -311,8 +311,8 @@ func TestServiceUpdateReopeningClearsResolutionDate(t *testing.T) {
 		Status: "resolved", ResolvedAt: &resolvedAt, Date: "2027-06-11",
 	}}}
 
-	result, err := NewService(repo, nil, nil, nil).Update(scopedContext(), "project::1", "lighting", "incident::1", Input{
-		Title: "Lyre bloquée", Description: "Le problème est revenu", Severity: "medium", Status: "open", ResolvedAt: &resolvedAt,
+	result, err := NewService(repo, nil, nil, nil).Update(scopedContext(), "project::1", "lighting", "incident::1", UpdateInput{
+		Title: new("Lyre bloquée"), Description: new("Le problème est revenu"), Severity: new("medium"), Status: new("open"), ResolvedAt: &resolvedAt,
 	}, "user::1", "lumiere")
 
 	require.NoError(t, err)
@@ -367,8 +367,8 @@ func TestServiceUpdateAcceptsUnchangedDateOutsideProject(t *testing.T) {
 			stored.ID, stored.Type, stored.ProjectID, stored.Module, stored.Status = "incident::1", docType, "project::1", "audio", "open"
 			repo := &repositoryMock{docs: []doc{stored}}
 
-			result, err := NewService(repo, nil, festival, nil).Update(scopedContext(), "project::1", "audio", "incident::1", Input{
-				Title: "Larsen", Description: "Réglé avant l'ouverture", Severity: "medium", Status: "closed",
+			result, err := NewService(repo, nil, festival, nil).Update(scopedContext(), "project::1", "audio", "incident::1", UpdateInput{
+				Title: new("Larsen"), Description: new("Réglé avant l'ouverture"), Severity: new("medium"), Status: new("closed"),
 			}, "user::1", "son")
 
 			require.NoError(t, err)
@@ -383,8 +383,8 @@ func TestServiceUpdateValidatesChangedDate(t *testing.T) {
 		ID: "incident::1", Type: docType, ProjectID: "project::1", Module: "audio", Status: "open", Date: "2027-06-11",
 	}}}
 
-	_, err := NewService(repo, nil, festival, nil).Update(scopedContext(), "project::1", "audio", "incident::1", Input{
-		Title: "Larsen", Description: "Retour scène", Severity: "medium", Date: "2027-06-20",
+	_, err := NewService(repo, nil, festival, nil).Update(scopedContext(), "project::1", "audio", "incident::1", UpdateInput{
+		Title: new("Larsen"), Description: new("Retour scène"), Severity: new("medium"), Date: new("2027-06-20"),
 	}, "user::1", "son")
 
 	var validationError *ValidationError
@@ -399,8 +399,8 @@ func TestServiceUpdateKeepsResolutionDateWhenOmitted(t *testing.T) {
 		Status: "resolved", ResolvedAt: &resolvedAt, Date: "2027-06-11",
 	}}}
 
-	result, err := NewService(repo, nil, festival, nil).Update(scopedContext(), "project::1", "lighting", "incident::1", Input{
-		Title: "Lyre bloquée", Description: "Faute de frappe corrigée", Severity: "medium", Status: "closed",
+	result, err := NewService(repo, nil, festival, nil).Update(scopedContext(), "project::1", "lighting", "incident::1", UpdateInput{
+		Title: new("Lyre bloquée"), Description: new("Faute de frappe corrigée"), Severity: new("medium"), Status: new("closed"),
 	}, "user::1", "lumiere")
 
 	require.NoError(t, err)
@@ -431,8 +431,8 @@ func TestServiceUpdateSeesIncidentResolvedConcurrently(t *testing.T) {
 	}}}
 	linker := &equipmentMock{known: map[string]bool{"equipment::hf1": true}}
 
-	_, err := NewService(repo, nil, festival, linker).Update(scopedContext(), "project::1", "audio", "incident::1", Input{
-		Title: "HF muet", Description: "Pile changée", Severity: "high", Status: "resolved", EquipmentID: "equipment::hf1",
+	_, err := NewService(repo, nil, festival, linker).Update(scopedContext(), "project::1", "audio", "incident::1", UpdateInput{
+		Title: new("HF muet"), Description: new("Pile changée"), Severity: new("high"), Status: new("resolved"), EquipmentID: new("equipment::hf1"),
 	}, "user::1", "son")
 
 	require.NoError(t, err)

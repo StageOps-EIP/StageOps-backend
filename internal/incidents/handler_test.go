@@ -29,7 +29,7 @@ func (m *serviceMock) Create(ctx context.Context, projectID, module string, inpu
 	return m.createFn(ctx, projectID, module, input, authorID, authorRole)
 }
 
-func (m *serviceMock) Update(context.Context, string, string, string, Input, string, string) (*Incident, error) {
+func (m *serviceMock) Update(context.Context, string, string, string, UpdateInput, string, string) (*Incident, error) {
 	return nil, ErrNotFound
 }
 

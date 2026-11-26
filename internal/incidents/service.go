@@ -17,7 +17,7 @@ type IncidentService interface {
 	List(ctx context.Context, projectID, module string, filter ListFilter) ([]Incident, error)
 	Get(ctx context.Context, projectID, module, id string) (*Incident, error)
 	Create(ctx context.Context, projectID, module string, input Input, authorID, authorRole string) (*Incident, error)
-	Update(ctx context.Context, projectID, module, id string, input Input, authorID, authorRole string) (*Incident, error)
+	Update(ctx context.Context, projectID, module, id string, patch UpdateInput, authorID, authorRole string) (*Incident, error)
 	Delete(ctx context.Context, projectID, module, id, authorID, authorRole string) error
 }
 
@@ -123,10 +123,24 @@ func (s *Service) Create(ctx context.Context, projectID, module string, input In
 	return toPublic(incident), nil
 }
 
-func (s *Service) Update(ctx context.Context, projectID, module, id string, input Input, authorID, authorRole string) (*Incident, error) {
+func (s *Service) Update(ctx context.Context, projectID, module, id string, patch UpdateInput, authorID, authorRole string) (*Incident, error) {
 	incident, err := s.findInScope(ctx, projectID, module, id)
 	if err != nil {
 		return nil, err
+	}
+	if patch == (UpdateInput{}) {
+		return toPublic(incident), nil
+	}
+	input := Input{
+		Title:           valueOr(patch.Title, incident.Title),
+		Description:     valueOr(patch.Description, incident.Description),
+		Severity:        valueOr(patch.Severity, incident.Severity),
+		Status:          valueOr(patch.Status, incident.Status),
+		EquipmentID:     valueOr(patch.EquipmentID, incident.EquipmentID),
+		Date:            valueOr(patch.Date, incident.day()),
+		ResolvedAt:      patch.ResolvedAt,
+		ResolutionNotes: valueOr(patch.ResolutionNotes, incident.ResolutionNotes),
+		Images:          valueOr(patch.Images, incident.Images),
 	}
 	if input.Date == "" {
 		input.Date = incident.day()
