@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -296,12 +297,25 @@ func securityHeaders() fiber.Handler {
 	}
 }
 
-func globalErrorHandler(c *fiber.Ctx, _ error) error {
-	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-		"error": fiber.Map{
-			"code":    "INTERNAL_ERROR",
-			"message": "Une erreur interne est survenue.",
-		},
+func globalErrorHandler(c *fiber.Ctx, err error) error {
+	status := fiber.StatusInternalServerError
+	code, message := "INTERNAL_ERROR", "Une erreur interne est survenue."
+	var httpError *fiber.Error
+	if errors.As(err, &httpError) && httpError.Code >= 400 && httpError.Code < 500 {
+		status = httpError.Code
+		switch status {
+		case fiber.StatusNotFound:
+			code, message = "NOT_FOUND", "Route introuvable."
+		case fiber.StatusMethodNotAllowed:
+			code, message = "METHOD_NOT_ALLOWED", "Méthode non autorisée pour cette route."
+		case fiber.StatusRequestEntityTooLarge:
+			code, message = "PAYLOAD_TOO_LARGE", "Le corps de la requête dépasse la taille autorisée."
+		default:
+			code, message = "REQUEST_ERROR", "La requête a été refusée."
+		}
+	}
+	return c.Status(status).JSON(fiber.Map{
+		"error": fiber.Map{"code": code, "message": message},
 	})
 }
 
