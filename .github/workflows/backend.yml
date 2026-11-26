@@ -64,11 +64,10 @@ jobs:
           docker compose --env-file .env.production.example $compose_files up --detach --no-build --wait couchdb backend
           docker compose --env-file .env.production.example $compose_files exec --no-TTY backend \
             curl --fail --silent http://127.0.0.1:3000/api/health/ready
-          docker compose --env-file .env.production.example $compose_files exec --no-TTY backend \
-            curl --fail --silent \
-              --header 'Content-Type: application/json' \
-              --data '{"email":"admin@example.com","password":"replace-with-Strong-Admin-Password-42!"}' \
-              http://127.0.0.1:3000/api/auth/login
+          STAGEOPS_E2E_URL=http://127.0.0.1:13000 \
+          STAGEOPS_E2E_ADMIN_EMAIL=admin@example.com \
+          STAGEOPS_E2E_ADMIN_PASSWORD='replace-with-Strong-Admin-Password-42!' \
+            python3 .github/integration/test_business_flow.py
           couch_url='http://127.0.0.1:15984'
           couch_auth='stageops_admin:replace-with-at-least-32-random-characters'
           curl --fail --silent --retry 10 --retry-connrefused --retry-delay 1 \

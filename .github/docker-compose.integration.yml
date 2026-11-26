@@ -8,3 +8,10 @@ services:
       - edge
     ports:
       - "127.0.0.1:15984:5984"
+
+  backend:
+    environment:
+      ALLOW_PUBLIC_REGISTRATION: "true"
+      AUTH_REQUIRE_EMAIL_VERIFICATION: "false"
+    ports:
+      - "127.0.0.1:13000:3000"
